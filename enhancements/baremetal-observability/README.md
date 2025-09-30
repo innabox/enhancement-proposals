@@ -3,7 +3,7 @@ title: bare-metal-observability
 authors:
   - Austin Jamias
 creation-date: 2025-09-24
-last-updated: 2025-09-24
+last-updated: 2025-09-30
 tracking-link: # link to the tracking ticket (for example: Github issue) that corresponds to this enhancement
   - N/A
 see-also:
@@ -20,7 +20,7 @@ superseded-by:
 
 We want a way to gather bare metal metrics from tenant clusters and have them
 available at some configurable endpoint for the cloud provider to manage. This
-feature will be easily toggleable per tenant cluster.
+feature will provide an interface compatible to many inventory services.
 
 ## Motivation
 
@@ -35,29 +35,29 @@ and essential hardware metrics if they should use it for their projects.
 ### User Stories
 
 * As a provider, I want to easily deploy and undeploy bare metal
-  observability using an automation application like Ansible
-  or an operator.
+  observability using Ansible playbooks.
 * As a provider, I want to be able to access a metric endpoint so I
   can connect it to Prometheus compatible frontend applications and
   stacks.
 * As a provider, I want my metrics to come with labels about the
   originating clusters and nodes so I can build my own RBAC system
   to the metrics for the tenants.
-* As a provider, I want to easily include another metric exporter if
-  I decide I want to use something other than Prometheus's IPMI and
-  SNMP exporters.
+* As a provider, I want to easily include Ansible roles for other
+  metric exporters if I decide I want to use something other than
+  Prometheus's IPMI and SNMP exporters.
+* As a provider, I want to easily swap different Ansible roles that
+  deploy using different inventory services.
 
 ### Goals
 
 This will be a success if this can be deployed as an optional feature
-in the OSAC installation process. The implementation will rely on ESI
-and OpenStack for retrieving information on where to get baremetal
-metrics. This will be using Prometheus compatible applications
-because the Prometheus is built-in to OpenShift.
-
-This will be a success if there is minimal to no communication needed
-between the tenant and the provider regarding additional observability
-management and configuration.
+in the OSAC installation process. The implementation will rely on
+Ansible roles providing an interface that can work with any inventory
+service for retrieving information on where to get baremetal metrics.
+The implementation will also rely on Prometheus compatible
+applications because the Prometheus is already built in to OpenShift
+(openshift-monitoring) and ACM observability
+(open-cluster-management-observability).
 
 ### Non-Goals
 
@@ -67,15 +67,15 @@ management and configuration.
 * We will not be looking into collecting from in-OS exporters in bare
   metal clusters. This may call for a later enhancement.
 * We will not be looking into fine-grain access to metrics, but we
-  can implement metric labeling with cluster and node labels now to
-  help with implementing fine-grain access later. This will call for
-  a later enhancement.
+  can implement metric labeling node labels now to help with
+  implementing fine-grain access later. This will call for a later
+  enhancement.
 
 ## Proposal
 
 The proposed implementation makes use of the [multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/#the-multi-target-exporter-pattern),
 notably the [IPMI-exporter](https://github.com/prometheus-community/ipmi_exporter)
-and the [SNMP-exporter](https://github.com/prometheus/snmp_exporter).
+and the [SNMP-exporter](https://github.com/prometheus/snmp_exporter)
 Multi-target exporters have properties perfect for our goals:
 * the exporter does not have to run on the machine the metrics are taken from
 * the exporter will get the target’s metrics via a network protocol
@@ -87,38 +87,47 @@ The following items describe the key points of the proposal:
 
 The first proposed change comes from the idea that the provider
 should not expect any tenant to run any metric exporter. Therefore,
-the proposed implementation has the exporters to be ran on the hub
-cluster and perform remote scrapes.
+the proposed implementation has the exporters to be ran on the ACM
+hub cluster and perform remote scrapes.
 
 **Discoverable**
 
-The nodes that host the exporters must be on the same network as the
-devices that the exporters perform the scrape on. The way this might
-happen might be through the fulfillment service. The nodes given to
-the tenants should have either minimal or no direct read/write access
-to the devices.
+The nodes that host the exporters (the hub cluster) must be on the
+same network as the BMCs (baseboard management controller). The nodes
+given to the tenants should have either minimal or no direct
+read/write access to the BMCs.
 
 **Distinguishable**
 
-The scraped metrics will need to be labeled with a cluster and node
-identifier so that the provider can identify which metric belongs to
-which cluster, node, and tenant, and the tenant can identify which node
-each of their metric belongs to.
-
+As of right now, the scraped metrics will need to be labeled with a
+node identifier so that the provider can then identify which cluster
+and tenant it belongs to. Once the enhancement proposal for the
+baremetal fulfillment gets implemented, the implementation can switch
+from using a node identifier to a cloudkit.Host and cloudkit.HostPool
+resource identifier.
 
 ### Workflow Description
 
 **Deploying Baremetal Observability**
-1. The cloud provider runs an ansible playbook with an argument that
-   indicates the want to deploy.
-2. The resources needed for the baremetal metric collection system
-   gets deployed
+1. The cloud provider navigates to either the Ansible web interface,
+   or prepares a POST request to send to the Ansible Automation
+   Platform API.
+2. The cloud provider submits a request to run the
+   baremetal-observability playbook with extra-vars that indicate
+   the signal to create the system, which inventory service they are
+   using and which exporters to deploy.
+3. The resources needed for the baremetal metric collection system
+   gets deployed.
 
 **Removing Baremetal Observability**
-1. The cloud provider runs an ansible playbook with an argument that
-   indicates the want to remove.
-2. The resources needed for the baremetal metric collection system
-   gets removed
+1. The cloud provider navigates to either the Ansible web interface,
+   or prepares a POST request to send to the Ansible Automation
+   Platform API.
+2. The cloud provider submits a request to run the
+   baremetal-observability playbook with extra-vars that indicate the
+   signal to destroy the system.
+3. The Ansible job removes everything deployed by the
+   baremetal-observability template.
 
 ### API Extensions
 
@@ -126,41 +135,82 @@ N/A
 
 ### Implementation Details/Notes/Constraints
 
-For simplicity, this section will only talk about Prometheus's IPMI
-exporter, but we also plan on deploying Prometheus's SNMP exporter,
-and more exporters can easily be added aswell.
+The directory structure focuses on keeping the inventory service and
+types of exporters modular so that the cloud provider can pick and
+choose for their needs. An example might look like this:
+
+```bash
+└── roles
+    ├── baremetal_observability
+    │   ├── defaults
+    │   │   └── main.yaml
+    │   ├── meta
+    │   │   └── argument_specs.yaml
+    │   └── tasks
+    │       ├── create_baremetal_observability.yaml
+    │       ├── destroy_baremetal_observability.yaml
+    │       └── main.yaml
+    │
+    │   # inventory services
+    ├── openstack
+    │   ├── defaults
+    │   │   └── main.yaml
+    │   ├── meta
+    │   │   └── argument_specs.yaml
+    │   └── tasks
+    │       └── main.yaml
+    │
+    │   # metric exporters
+    ├── ipmi-exporter
+    │   └── tasks
+    │       └── main.yaml
+    ├── snmp-exporter
+    │   └── tasks
+    │       └── main.yaml
+```
 
 **Exporter constraints**:
 
 Operational metrics are metrics that are scraped from exporters
 running on the same host. Operational metrics from baremetal clusters
 cannot be trusted because the tenant can theoretically supply fake
-metrics to the cloud provider.
+metrics to the cloud provider. For now, we assume that all exporters
+scrape from the BMC.
 
 **AAP**:
 
 The installation process will be described by a bunch of tasks in an
 Ansible playbook. The playbook will need to be repeated any time a
-new node gets added to the cloud provider's node pool. The task of
-setting up an IPMI exporter to scrape metrics from all ESI nodes
+new node gets added to the cloud provider's node pool. To keep this
+playbook flexible, the user will need to provide the following
+parameters in the extra-vars flag when executing the playbook:
+
+* string bmo\_state: Either "present" or "absent". Set to "present"
+  to deploy baremetal-observability, set to "absent" to undeploy.
+* string bmo\_inventory\_service: Set it to the name of the Ansible
+  role that will retrieve relevant information for the exporters
+* string[] bmo\_exporters: Set it to a list of metric exporters you
+  wish to deploy
+
+The task of setting up exporters to scrape metrics from all nodes
 looks like this:
 
 1. Connect the hub nodes to the BMC network
-2. Get all IPMI IPs and ports to scrape from OpenStack
-3. Create an IPMI exporter deployment on the hub cluster configured
-   with the username and password required to access the BMCs of each
-   node
-4. Create an IPMI exporter service
+2. Get all BMC IPs and ports to scrape from the inventory service
+3. Create a k8s.Deployment for each exporter in bmo\_exporters on the
+   hub cluster configured with the username and password required to
+   access the BMCs of each node
+4. Create a k8s.Service for each exporter
 5. Create an IPMI exporter ServiceMonitor connected to the IPMI
    exporter service and configured to scrape the IPs and ports, and
    discoverable by openshift-monitoring's Prometheus pods
 
 **Access to Metrics**:
 
-Access to metrics can be done through Prometheus or the Thanos
-Querier (also the Observatorium API). Providers are able to
-deploy their own Prometheus API compatible applications if they
-choose to do so.
+The cloud provider can access metrics through Prometheus or the
+Thanos Querier (also the Observatorium API). Providers are able to
+deploy their own Prometheus API compatible applications for tenants
+to access metrics if they choose to do so.
 
 ### Risks and Mitigations
 
