@@ -7,7 +7,7 @@ last-updated: 2025-09-30
 tracking-link: # link to the tracking ticket (for example: Github issue) that corresponds to this enhancement
   - N/A
 see-also:
-  - N/A
+  - https://github.com/ajamias/baremetal-observability-aap
 replaces:
   - N/A
 superseded-by:
