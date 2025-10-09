@@ -1,5 +1,5 @@
 ---
-title: Virtualization as a service
+title: Virtual-Machine-as-a-service
 authors:
   - Adrien Gentil
 creation-date: 2025-09-15
@@ -11,7 +11,7 @@ replaces:
 superseded-by:
 ---
 
-# Virtualization-as-a-Service
+# Virtual-Machine-as-a-Service
 
 
 ## Summary
@@ -29,15 +29,17 @@ separate proposal.
 
 ## Motivation
 
-Virtualization-as-a-Service (VMaaS) addresses the need for flexible, on-demand
-compute resources within a multi-tenant environments. This is a need identified
-in the scope of O-SAC, and will benefit to the MOC.
+Virtual-Machine-as-a-Service (VMaaS) addresses the need for flexible, on-demand
+compute resources within a multi-tenant environment. Additionally, VMaaS enables
+the sharing of specialized hardware resources, such as GPUs, across multiple
+projects, maximizing hardware utilization and accessibility. This is a need
+identified in the scope of O-SAC, and will benefit the MOC.
 
 ### User Stories
 
 - As a provider, I want to define VM templates that my tenants will be able to
   use
-- As a tenant, I want to list a pre-defined VM templates
+- As a tenant, I want to list pre-defined VM templates
 - As a tenant, I want to create a VM based on a pre-defined template
 - As a tenant, I want a VM that has access to specialized hardware (e.g.: GPU)
 - As a tenant, I want to manage the lifecycle of my VM (start/stop/terminate)
@@ -67,12 +69,12 @@ The following are explicitly out of scope for this proposal:
 - Offering built-in backup, restore, or disaster recovery solutions for VMs or
   attached storage
 - Delivering a marketplace for third-party VM images or applications, we expect
-  tenant to rely on en external image registry to distribute they OS base images
+  tenant to rely on an external image registry to distribute OS base images
 
 ## Proposal
 
 The process of fulfilling virtual machine requests is based on two primary
-concepts:
+APIs:
 
 * **VirtualMachine**: Represents an individual virtual machine that a tenant can
   create and manage. Tenants can only see the virtual machines they created.
@@ -103,21 +105,6 @@ enhanced or updated:
   interactions with KubeVirt for VM lifecycle management and ESI APIs for
   assigning floating IPs.
 
-Under the hood, the virtual machines will be managed using OpenShift
-Virtualization. Each VirtualMachine will be created in its own dedicated
-namespace on the Hub cluster. The VM will be connected to a dedicated UDN L2
-network, which provides network isolation, mainly for 2 reasons:
-- security: this means the VM cannot communicate with other workloads on the Hub
-  cluster using its internal IP address.
-- Live migration: UDN L2 enables the virtual machine to be migrated live from
-  OpenShift nodes to others. Migration can happen when a node is degraded or in
-  maintenance.
-
-To enable external connectivity, a Kubernetes Service of type LoadBalancer will
-be created in front of the VM. A floating (external) IP address will be assigned
-to this LoadBalancer service, allowing the VM to be accessed from outside the
-cluster.
-
 ### Workflow Description
 
 #### Virtual machine creation and update
@@ -142,8 +129,8 @@ cluster.
 
 5. The Operator, using Ansible Automation Platform (AAP), automates the
    following steps:
-    - Creates a dedicated namespace for the VM if one does not already exist
-    - Provisions necessary network resources, including:
+    - Provisions necessary resources, including:
+        - Tenant's namespace
         - A UDN L2 network to provide network isolation
         - A load balancer service with the VM as its backend
         - Assignment of a floating IP to the load balancer service for external
@@ -183,7 +170,8 @@ is executed:
 5. The Operator, using Ansible Automation Platform (AAP), automates the
    following steps:
     - Deletes the KubeVirt VirtualMachine resource.
-    - Releases and deallocate any associated network resources, including:
+    - Releases and deallocate any associated resources, including:
+        - Tenant's namespace
         - UDN L2 network
         - Load balancer service
         - Floating IPs via ESI APIs
@@ -419,40 +407,31 @@ is the API format used for this publication:
 
 ### Implementation Details/Notes/Constraints
 
+This proposal is built upon OpenShift Virtualization, which leverages KubeVirt
+to provide virtualization capabilities. By using OpenShift Virtualization, we
+are able to offer tenants a self-service platform for creating, managing, and
+operating virtual machines (VMs) with minimal operational overhead, directly
+aligning with our goal of providing a user-friendly API for VM lifecycle
+management.
 
-#### Virtual machines on HUB cluster
+When a VM is created, it is connected to a dedicated UDN (User Defined Network)
+that is assigned to the tenant. In other words, all VMs belonging to the same
+tenant share a single UDN, while VMs from different tenants are placed on
+separate UDNs. This design ensures strong network isolation between tenants.
 
-Virtual machines will be created on the HUB cluster chosen by the Fulfillment
-Service. Although there was discussion about creating a dedicated cluster for VM
-workloads using the Cluster-as-a-Service API, this approach would not improve
-reliability. This is because these dedicated clusters would still be implemented
-as HostedClusters, whose reliability ultimately depends on the same underlying
-HUB cluster.
+Even though all of a tenant's VMs share the same UDN (User Defined Network) in a
+given HUB cluster, each VM still needs its own floating IP in order to be
+accessible from other VMs. This is because the Fulfillment Service may provision
+a tenant's VMs on different HUB clusters, as a consequence, internal network
+connectivity between VMs cannot be guaranteed. The floating IP is also required
+to access the VM from the outside.
 
-#### Networking
-
-Because O-SAC does not yet provide a VDCaaS (Virtual Data Center as a Service)
-layer, and the Fulfillment Service cannot guarantee that two virtual machines
-will be provisioned on the same HUB cluster, each virtual machine must be
-assigned a floating IP. This ensures that every VM is accessible regardless of
-where it is deployed.
-
-
-#### Load balancer service type and MetalLB
-
-Even though a Kubernetes Service of type LoadBalancer requires explicit port
-mappings to be defined, MetalLB will actually expose all ports on the assigned
-external IP address. This means that, in practice, any port on the VM can be
-accessed via the floating IP, regardless of the ports specified in the Service
-manifest.
-
-#### UDN and network isolation
-
-Virtual machines that are provisioned on different UDN networks will still be
-able to communicate with each other by using their assigned floating IPs. Since
-each VM is given a floating IP for external access, network traffic between VMs
-on separate UDN networks can be routed through these public endpoints, ensuring
-connectivity even in the absence of a shared internal network.
+To allow services running on a VM to be accessible from outside the cluster, the
+template may handle the port mapping through a parameter. Defining which ports
+to be exposed as a template parameter provides flexibility: it allows us to
+easily adjust how ports will be exposed in the future, especially when VDCaaS
+(Virtual Data Center as a Service) will introduce new ways to manage external
+access.
 
 ### Risks and Mitigations
 
@@ -460,28 +439,43 @@ TBD
 
 ### Drawbacks
 
-The initial design of VMaaS has significant limitations due to the absence of
-regions and zones in our API:
+#### Virtual machines on HUB cluster
+
+Initially, all virtual machines will be created on the HUB cluster selected by
+the Fulfillment Service.
+
+In the future, we plan to support deploying virtual machines on remote,
+dedicated clusters. This approach offers several advantages:
+
+- It provides stronger isolation between customer workloads and the cloud
+  provider’s management tools
+- It allows the management (HUB) cluster to be upgraded, maintained, or migrated
+  independently from the clusters running customer VMs
+- The clusters hosting VMs can be managed and monitored according to their own
+  uptime and operational requirements, even if they share hardware with the
+  management cluster (in case of Hosted Clusters)
+- It enables the possibility of creating dedicated virtualization clusters for
+  individual tenants, which is important for tenants who require higher levels
+  of isolation
+
+This feature will be part of a separate enhancement.
+
+#### Networking
+
+While simple, the initial design of VMaaS networking has significant limitations:
 
 - Tenants cannot create complex VM architectures that use both public and
   private networks. Features such as security groups and network ACLs are also
-  missing.
-- Tenants are unable to provision permanent block storage that can be attached
-  to and detached from different VMs as needed.
+  missing
+- Each gets a floating IP assigned to it, this pool of IPs is limited
+- OpenShift team doesn't recommend more than 100 UDNs per cluster, this solution
+  will then be limited to 100 tenants using VMs
 
 We expect to revisit and improve this design once the VDCaaS (Virtual Data
 Center as a Service) functionality is available.
 
-Another limitation is that currently, virtual machines can only be managed on
-the local (HUB) cluster. In the future, there may be a need to manage virtual
-machines on remote or dedicated clusters, especially if service providers deploy
-clusters specifically for VM workloads. This would allow for enhanced security
-and the use of specialized hardware. The development of such feature will be
-part of another enhancement.
-
 ## Alternatives (Not Implemented)
 
-TBD
 
 ## Open Questions [optional]
 
