@@ -73,20 +73,19 @@ The following are explicitly out of scope for this proposal:
 
 ## Proposal
 
-The process of fulfilling virtual machine requests is based on two primary
-APIs:
+The process of fulfilling virtual machine requests is based on two primary APIs:
 
-* **VirtualMachine**: Represents an individual virtual machine that a tenant can
-  create and manage. Tenants can only see the virtual machines they created.
-* **VirtualMachineTemplate**: Defined by the provider, this is a pre-configured
+* **ComputeInstance**: Represents an individual virtual machine that a tenant
+  can create and manage. Tenants can only see the virtual machines they created.
+* **ComputeInstanceTemplate**: Defined by the provider, this is a pre-configured
   blueprint for virtual machines. Each template is identified by a unique
   template ID and includes a set of parameters (some required, some optional)
   that tenants can specify when creating a VM. Templates are available to all
   tenants to use, they cannot edit them.
 
-To request a new VirtualMachine, tenants must provide:
+To request a new ComputeInstance, tenants must provide:
 
-* The ID of the desired VirtualMachineTemplate
+* The ID of the desired ComputeInstanceTemplate
 * Any required or optional parameters for that template
 * The desired initial state of the VM (e.g., started or stopped)
 
@@ -95,13 +94,13 @@ fulfillment workflows. To support this, the following O-SAC components will be
 enhanced or updated:
 
 * **Fulfillment Service**: Defines and exposes the APIs for managing
-  VirtualMachine and VirtualMachineTemplate resources.
+  ComputeInstance and ComputeInstanceTemplate resources.
 * **Fulfillment CLI**: Provides tenants with command-line access to the
   Fulfillment Service APIs.
-* **O-SAC Operator**: Monitors and reconciles VirtualMachine custom resources
+* **O-SAC Operator**: Monitors and reconciles ComputeInstance custom resources
   within the system.
 * **O-SAC AAP (Ansible Automation Platform)**: Executes automation tasks (via
-  Ansible playbooks) to reconcile VirtualMachine resources, including
+  Ansible playbooks) to reconcile ComputeInstance resources, including
   interactions with KubeVirt for VM lifecycle management and ESI APIs for
   assigning floating IPs.
 
@@ -109,9 +108,9 @@ enhanced or updated:
 
 #### Virtual machine creation and update
 
-1. The tenant initiates the creation of a new VirtualMachine using the
+1. The tenant initiates the creation of a new ComputeInstance using the
    Fulfillment CLI. The tenant must provide:
-    - The ID of the desired VirtualMachineTemplate
+    - The ID of the desired ComputeInstanceTemplate
     - All required and any optional parameters for the template (such as CPU,
       memory, disk size, network configuration)
     - The desired initial state of the VM (e.g., started or stopped)
@@ -122,9 +121,9 @@ enhanced or updated:
     - All required parameters are provided and valid
 
 3. Upon successful validation, the Fulfillment Service creates a new
-   VirtualMachine custom resource (CR) in the appropriate Hub and namespace.
+   ComputeInstance custom resource (CR) in the appropriate Hub and namespace.
 
-4. The O-SAC Operator detects the new VirtualMachine CR and begins the
+4. The O-SAC Operator detects the new ComputeInstance CR and begins the
    reconciliation process.
 
 5. The Operator, using Ansible Automation Platform (AAP), automates the
@@ -140,7 +139,7 @@ enhanced or updated:
     - Performs any additional operations required by the selected template
 
 6. The Operator continuously monitors the VM’s status and updates the
-   VirtualMachine CR status to reflect the current state.
+   ComputeInstance CR status to reflect the current state.
 
 7. The tenant can check the VM’s status at any time using the Fulfillment CLI or
    API, and can access the VM via the assigned floating IP.
@@ -150,21 +149,21 @@ to be idempotent.
 
 #### Virtual machine deletion
 
-When a tenant requests the deletion of a VirtualMachine, the following workflow
+When a tenant requests the deletion of a ComputeInstance, the following workflow
 is executed:
 
-1. The tenant initiates the deletion of a VirtualMachine using the Fulfillment
+1. The tenant initiates the deletion of a ComputeInstance using the Fulfillment
    CLI or API by specifying its identifier.
 
 2. The Fulfillment Service receives the deletion request and performs validation
    to ensure:
-    - The specified VirtualMachine resource exists and is available.
+    - The specified ComputeInstance resource exists and is available.
     - The tenant has permission to delete the resource.
 
 3. Upon successful validation, the Fulfillment Service deletes the
-   VirtualMachine custom resource (CR) from the appropriate namespace.
+   ComputeInstance custom resource (CR) from the appropriate namespace.
 
-4. The O-SAC Operator detects the deletion of the VirtualMachine CR and begins
+4. The O-SAC Operator detects the deletion of the ComputeInstance CR and begins
    the cleanup process.
 
 5. The Operator, using Ansible Automation Platform (AAP), automates the
@@ -185,7 +184,7 @@ is executed:
 7. The tenant can confirm the deletion and cleanup via the Fulfillment CLI or
    API.
 
-This workflow ensures that all resources associated with the VirtualMachine are
+This workflow ensures that all resources associated with the ComputeInstance are
 properly deprovisioned and that no orphaned resources remain.
 
 #### Virtual machine template management
@@ -202,9 +201,9 @@ templates.
 
 ### API Extensions
 
-#### VirtualMachine
+#### ComputeInstance
 
-A tenant requests a virtual machine by requesting a VirtualMachine to the
+A tenant requests a virtual machine by requesting a ComputeInstance to the
 Fulfillment Service. Here is an example of request that creates a VM, using a
 template that let tenants to customize the amount of CPUs, memory and boot disk
 size:
@@ -237,7 +236,7 @@ details as follows:
 
 ```json
 {
-  "@type": "type.googleapis.com/fulfillment.v1.VirtualMachine",
+  "@type": "type.googleapis.com/fulfillment.v1.ComputeInstance",
   "id": "fecb9b9e-07ac-4d56-8b48-9d50aab71677",
   "metadata": {
     "creation_timestamp": "2025-09-17T08:14:17.569076Z",
@@ -266,54 +265,54 @@ details as follows:
         "last_transition_time": "2025-09-19T17:32:24.054439350Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_CONDITION_TYPE_PROVISIONNING"
+        "type": "COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONNING"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_STATE_STARTING"
+        "type": "COMPUTE_INSTANCE_STATE_STARTING"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
         "message": "",
         "status": "CONDITION_STATUS_TRUE",
-        "type": "VIRTUAL_MACHINE_STATE_RUNNING"
+        "type": "COMPUTE_INSTANCE_STATE_RUNNING"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_STATE_STOPPING"
+        "type": "COMPUTE_INSTANCE_STATE_STOPPING"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_STATE_STOPPED"
+        "type": "COMPUTE_INSTANCE_STATE_STOPPED"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_STATE_TERMINATING"
+        "type": "COMPUTE_INSTANCE_STATE_TERMINATING"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_STATE_PAUSED"
+        "type": "COMPUTE_INSTANCE_STATE_PAUSED"
       },
       {
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_CONDITION_TYPE_FAILED"
+        "type": "COMPUTE_INSTANCE_CONDITION_TYPE_FAILED"
       },
       {
         "status": "CONDITION_STATUS_FALSE",
-        "type": "VIRTUAL_MACHINE_CONDITION_TYPE_DEGRADED"
+        "type": "COMPUTE_INSTANCE_CONDITION_TYPE_DEGRADED"
       }
     ],
-    "state": "VIRTUAL_MACHINE_STATE_RUNNING",
+    "state": "COMPUTE_INSTANCE_STATE_RUNNING",
     "internalIP": "10.0.0.1",
     "externalIP": "193.1.2.3"
   }
@@ -329,30 +328,30 @@ The status section provides two types of IP addresses for the virtual machine:
   address allows the VM to be accessed from outside the internal network, such
   as from the internet.
 
-The Virtual Machine can be in one of the following states, as reflected in the
+The virtual machine can be in one of the following states, as reflected in the
 status section above. These states are mapped from the underlying KubeVirt
 VirtualMachine status conditions:
 
-- **Provisioning** (`VIRTUAL_MACHINE_STATE_PROVISIONING`): The VM is being
+- **Provisioning** (`COMPUTE_INSTANCE_STATE_PROVISIONING`): The VM is being
   created.
-- **Starting** (`VIRTUAL_MACHINE_STATE_STARTING`): The Pod for the Virtual
+- **Starting** (`COMPUTE_INSTANCE_STATE_STARTING`): The Pod for the Virtual
   Machine Instance (VMI) is being scheduled and started.
-- **Running** (`VIRTUAL_MACHINE_STATE_RUNNING`): The VM is actively running
+- **Running** (`COMPUTE_INSTANCE_STATE_RUNNING`): The VM is actively running
   inside its Pod.
-- **Stopping** (`VIRTUAL_MACHINE_STATE_STOPPING`): The VM is in the process of
+- **Stopping** (`COMPUTE_INSTANCE_STATE_STOPPING`): The VM is in the process of
   shutting down.
-- **Stopped** (`VIRTUAL_MACHINE_STATE_STOPPED`): The VM is not running. It
-  exists as a VirtualMachine object, but there is no active VMI or Pod.
-- **Terminating** (`VIRTUAL_MACHINE_STATE_TERMINATING`): The VM object is in the
-  process of being deleted.
-- **Paused** (`VIRTUAL_MACHINE_STATE_PAUSED`): The VM is in a suspended state.
+- **Stopped** (`COMPUTE_INSTANCE_STATE_STOPPED`): The VM is not running. It
+  exists as a ComputeInstance object, but there is no active VMI or Pod.
+- **Terminating** (`COMPUTE_INSTANCE_STATE_TERMINATING`): The VM object is in
+  the process of being deleted.
+- **Paused** (`COMPUTE_INSTANCE_STATE_PAUSED`): The VM is in a suspended state.
   Its process is frozen, but its memory and resources are still allocated.
 
 These states are reported in the `type` field of the VM's `conditions` array in
 the status section.
 
 
-#### VirtualMachineTemplate
+#### ComputeInstanceTemplate
 
 Virtual machine templates are implemented as Ansible roles. Each role must
 include the following files:
@@ -462,7 +461,8 @@ This feature will be part of a separate enhancement.
 
 #### Networking
 
-While simple, the initial design of VMaaS networking has significant limitations:
+While simple, the initial design of VMaaS networking has significant
+limitations:
 
 - Tenants cannot create complex VM architectures that use both public and
   private networks. Features such as security groups and network ACLs are also
