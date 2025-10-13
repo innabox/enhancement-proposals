@@ -18,7 +18,7 @@ superseded-by:
 
 This document proposes a service enabling tenants to easily create, manage, and
 operate virtual machines (VMs) within a self-service environment. The service
-will provide user-friendly APIs for provisioning, customizing, and  controlling
+will provide user-friendly APIs for provisioning, customizing, and controlling
 the lifecycle of VMs attaching storage, and accessing specialized hardware
 (GPUs).
 
@@ -32,8 +32,8 @@ separate proposal.
 Virtual-Machine-as-a-Service (VMaaS) addresses the need for flexible, on-demand
 compute resources within a multi-tenant environment. Additionally, VMaaS enables
 the sharing of specialized hardware resources, such as GPUs, across multiple
-projects, maximizing hardware utilization and accessibility. This is a need
-identified in the scope of O-SAC, and will benefit the MOC.
+projects, maximizing hardware utilization and accessibility. This addresses a
+need identified in the scope of O-SAC, and will benefit the MOC.
 
 ### User Stories
 
@@ -56,6 +56,9 @@ identified in the scope of O-SAC, and will benefit the MOC.
   through the catalog of templates
 - Use ESI to assign floating IPs to created VM so they can be accessed
 - Achieve high availability by supporting live migration of VMs
+- Implement a quota system (to limit the number of VMs, storage, or resources
+  each tenant can use) is out of scope for this enhancement and will be
+  addressed in a separate proposal
 
 ### Non-Goals
 
@@ -265,7 +268,7 @@ details as follows:
         "last_transition_time": "2025-09-19T17:32:24.054439350Z",
         "message": "",
         "status": "CONDITION_STATUS_FALSE",
-        "type": "COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONNING"
+        "type": "COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONING"
       },
       {
         "last_transition_time": "2025-09-17T08:52:12.652582382Z",
@@ -321,31 +324,30 @@ details as follows:
 
 The status section provides two types of IP addresses for the virtual machine:
 
-- `internalIP`: The private IP address assigned to the VM on the internal
-  network.
+- `internalIP`: The private IP address assigned to the virtual machine on the
+  internal network.
 
-- `externalIP`: The public (floating) IP address assigned to the VM. This
-  address allows the VM to be accessed from outside the internal network, such
-  as from the internet.
+- `externalIP`: The public (floating) IP address assigned to the virtual
+  machine. This address allows the virtual machine to be accessed from outside
+  the internal network, such as from the internet.
 
 The virtual machine can be in one of the following states, as reflected in the
 status section above. These states are mapped from the underlying KubeVirt
 VirtualMachine status conditions:
 
-- **Provisioning** (`COMPUTE_INSTANCE_STATE_PROVISIONING`): The VM is being
-  created.
-- **Starting** (`COMPUTE_INSTANCE_STATE_STARTING`): The Pod for the Virtual
-  Machine Instance (VMI) is being scheduled and started.
-- **Running** (`COMPUTE_INSTANCE_STATE_RUNNING`): The VM is actively running
-  inside its Pod.
-- **Stopping** (`COMPUTE_INSTANCE_STATE_STOPPING`): The VM is in the process of
-  shutting down.
-- **Stopped** (`COMPUTE_INSTANCE_STATE_STOPPED`): The VM is not running. It
-  exists as a ComputeInstance object, but there is no active VMI or Pod.
-- **Terminating** (`COMPUTE_INSTANCE_STATE_TERMINATING`): The VM object is in
-  the process of being deleted.
-- **Paused** (`COMPUTE_INSTANCE_STATE_PAUSED`): The VM is in a suspended state.
-  Its process is frozen, but its memory and resources are still allocated.
+- **Provisioning** (`COMPUTE_INSTANCE_STATE_PROVISIONING`): The virtual machine
+  is being created.
+- **Starting** (`COMPUTE_INSTANCE_STATE_STARTING`): The virtual machine started.
+- **Running** (`COMPUTE_INSTANCE_STATE_RUNNING`): The virtual machine is
+  actively running.
+- **Stopping** (`COMPUTE_INSTANCE_STATE_STOPPING`): The virtual machine is in
+  the process of shutting down.
+- **Stopped** (`COMPUTE_INSTANCE_STATE_STOPPED`): The virtual machine is
+  stopped.
+- **Terminating** (`COMPUTE_INSTANCE_STATE_TERMINATING`): The virtual machine is
+  in the process of being deleted.
+- **Paused** (`COMPUTE_INSTANCE_STATE_PAUSED`): The virtual machine is in a
+  suspended state.
 
 These states are reported in the `type` field of the VM's `conditions` array in
 the status section.
