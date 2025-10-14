@@ -193,7 +193,7 @@ parameters in the extra-vars flag when executing the playbook:
 The task of setting up exporters to scrape metrics from all nodes
 looks like this:
 
-1. Connect the hub nodes to the BMC network
+1. Grant the hub nodes access to the BMC network
 2. Get all BMC IPs and ports to scrape from the inventory service
 3. Create a k8s.Deployment for each exporter in bmo\_exporters on the
    hub cluster configured with the username and password required to
