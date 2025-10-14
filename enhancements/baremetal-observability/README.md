@@ -195,7 +195,7 @@ looks like this:
 
 1. Grant the hub nodes access to the BMC network
 2. Get all BMC IPs and ports to scrape from the inventory service
-3. Create a k8s.Deployment for each exporter in bmo\_exporters on the
+3. Create a k8s.Deployment for each exporter in `bmo_exporters` on the
    hub cluster configured with the username and password required to
    access the BMCs of each node
 4. Create a k8s.Service for each exporter
