@@ -98,7 +98,7 @@ given to the tenants should have no access to the BMCs.
 
 **Distinguishable**
 
-As of right now, the scraped metrics will need to be labeled with a
+Initially, the scraped metrics will need to be labeled with a
 node identifier so that the provider can then identify which cluster
 and tenant it belongs to. Once the enhancement proposal for the
 baremetal fulfillment gets implemented, the implementation can switch
