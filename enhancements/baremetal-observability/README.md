@@ -183,11 +183,11 @@ new node gets added to the cloud provider's node pool. To keep this
 playbook flexible, the user will need to provide the following
 parameters in the extra-vars flag when executing the playbook:
 
-* string bmo\_state: Either "present" or "absent". Set to "present"
+* string `bmo_state`: Either "present" or "absent". Set to "present"
   to deploy baremetal-observability, set to "absent" to undeploy.
-* string bmo\_inventory\_service: Set it to the name of the Ansible
+* string `bmo_inventory_service`: Set it to the name of the Ansible
   role that will retrieve relevant information for the exporters
-* string[] bmo\_exporters: Set it to a list of metric exporters you
+* string[] `bmo_exporters`: Set it to a list of metric exporters you
   wish to deploy
 
 The task of setting up exporters to scrape metrics from all nodes
