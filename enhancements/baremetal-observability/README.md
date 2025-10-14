@@ -111,10 +111,9 @@ resource identifier.
 1. The cloud provider navigates to either the Ansible web interface,
    or prepares a POST request to send to the Ansible Automation
    Platform API.
-2. The cloud provider submits a request to run the
-   baremetal-observability playbook with extra-vars that indicate
-   the signal to create the system, which inventory service they are
-   using and which exporters to deploy.
+2. The cloud provider submits a request to run the baremetal-observability
+   playbook with extra-vars that instruct the playbook to create the system,
+   which inventory service they are using and which exporters to deploy.
 3. The resources needed for the baremetal metric collection system
    gets deployed.
 
