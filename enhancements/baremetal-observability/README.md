@@ -94,8 +94,7 @@ hub cluster and perform remote scrapes.
 
 The nodes that host the exporters (the hub cluster) must be on the
 same network as the BMCs (baseboard management controller). The nodes
-given to the tenants should have either minimal or no direct
-read/write access to the BMCs.
+given to the tenants should have no access to the BMCs.
 
 **Distinguishable**
 
