@@ -71,6 +71,11 @@ The following are explicitly out of scope for this proposal:
 - Storage management and provisioning.
 - Detailed DNS provisioning implementation (mentioned as a requirement but implementation details
   are out of scope).
+- Mandating a specific host provisioning mechanism. While this document uses `BareMetalHost`
+  resources (from the Metal3 project) as an example for provisioning bare-metal hosts, the
+  pluggable inventory source architecture does not require this specific technology. Other
+  provisioning mechanisms (e.g., Ironic directly, vendor-specific tools) can be used depending
+  on the deployment environment.
 
 ## Proposal
 
@@ -156,9 +161,12 @@ resources exist in the hub cluster:
    resources for bare-metal provisioning.
 
 The hub reconciler also starts a Kubernetes resource watcher for each hub. This watcher monitors
-changes to `HostedCluster`, `NodePool`, `BareMetalHost`, and `Agent` resources, signaling the
-appropriate fulfillment service entities when changes occur. This enables reactive reconciliation
-instead of polling.
+changes to relevant Kubernetes resources, signaling the appropriate fulfillment service entities
+when changes occur. This enables reactive reconciliation instead of polling.
+
+For example, in a HyperShift-based deployment using Metal3 for bare-metal provisioning, the
+watcher would monitor `HostedCluster`, `NodePool`, `BareMetalHost`, and `Agent` resources.
+Different provisioning mechanisms may require watching different resource types.
 
 ### Inventory Synchronization Architecture
 
@@ -272,7 +280,7 @@ The BCM synchronizer maps:
 
 ### Workflow Integration
 
-Host assignment for clusters follows this flow:
+Host assignment for clusters follows this general flow:
 
 1. **Host Discovery**: Synchronizer creates/updates hosts with hardware details and host class
    references.
@@ -282,13 +290,35 @@ Host assignment for clusters follows this flow:
 3. **Host Selection**: Cluster reconciler selects unassigned hosts matching the requested host
    class.
 
+4. **Host Provisioning**: Reconciler triggers the provisioning mechanism with BMC credentials
+   from the host spec.
+
+5. **Host Registration**: When hosts boot and complete provisioning, they are registered with
+   the cluster.
+
+6. **Status Update**: Host status is updated with the assigned cluster and hub identifiers.
+
+#### Example: HyperShift with Metal3
+
+As a concrete example, when using HyperShift with Metal3 for bare-metal provisioning, the workflow
+becomes:
+
+1. **Host Discovery**: Same as above.
+
+2. **Cluster Creation**: Same as above.
+
+3. **Host Selection**: Same as above.
+
 4. **BareMetalHost Creation**: Reconciler creates `BareMetalHost` resources in the hub cluster
-   with BMC credentials from the host spec.
+   with BMC credentials from the host spec. Metal3 manages the hardware lifecycle.
 
 5. **Agent Binding**: When hosts boot and register as Agents, they are bound to the appropriate
    `HostedCluster`.
 
-6. **Status Update**: Host status is updated with the assigned cluster and hub identifiers.
+6. **Status Update**: Same as above.
+
+Other provisioning mechanisms would implement steps 4-5 differently while maintaining the same
+overall inventory synchronization and host selection patterns.
 
 ### DNS Provisioning Requirements
 
