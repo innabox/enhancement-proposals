@@ -46,7 +46,7 @@ Without metering for block storage, Cloud Provider Admins have no usage data to 
 
 ## Acceptance Criteria
 
-- [ ] A block storage volume generates usage data (GiB-seconds) for the period it holds allocated capacity — from when it becomes available for use until it is deleted — queryable per tenant, storage tier, and capacity
+- [ ] A block storage volume generates usage data (GiB-seconds) for the period it holds allocated capacity — from when it becomes available for use until it enters `FAILED` or the platform records the deletion request, whichever comes first — queryable per tenant, storage tier, and capacity
 - [ ] A block storage volume that fails to provision and never becomes available generates no usage data
 - [ ] When a block volume is resized, usage data reflects the new capacity from the point the resize takes effect; a resize that fails or is reverted leaves usage data unchanged
 - [ ] Storage usage can be broken down by storage tier, tenant, project, and individual volume
@@ -65,11 +65,12 @@ Without metering for block storage, Cloud Provider Admins have no usage data to 
 - Storage metering is added to the existing Part 1 metering service without requiring separate tenant or administrator setup.
 - The tenant-facing block storage Volume API will be implemented before block storage metering.
 - The Part 1 metering service supports allocation-based metering for block storage.
+- Storage usage closes at the earlier of a terminal `FAILED` transition and the platform's durable deletion-request timestamp. Vendor cleanup may continue after that boundary and is not included in the initial usage interval.
 
 ## Dependencies
 
 - **Part 1 metering infrastructure:** The metering infrastructure established by [Part 1](/enhancements/OSAC-985-metering-and-usage-tracking/prd.md) is a prerequisite. Block storage metering extends but does not replace it.
-- **OSAC-984 (Storage Volume API):** A tenant-facing block storage Volume resource must exist before block storage metering can be implemented, and must expose a stable association between a volume and its parent resource (VM or cluster) so usage can be attributed to that parent. The mechanism for this association is a design concern for OSAC-984 and this feature's enhancement proposal.
+- **OSAC-984 (Storage Volume API) and OSAC-4884 (Volume Attach/Detach):** A tenant-facing block storage Volume resource must exist before block storage metering can be implemented. OSAC-984 must expose the typed parent reference, and OSAC-4884 must define the attach/detach lifecycle and effective timestamps so usage can be attributed to VM, cluster, and bare-metal parents.
 
 ---
 
