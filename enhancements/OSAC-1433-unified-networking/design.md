@@ -102,7 +102,7 @@ its own design, which may support update and resize operations.
 | `ExternalIP` | Create, read, delete | Pool reference, address/allocation identity, and all other network `spec` fields are fixed after creation. |
 | `ExternalIPAttachment` | Create, read, delete | ExternalIP, target, endpoint, and all other binding `spec` fields are fixed after creation; retargeting requires delete and create. |
 | `NATGateway` | Create, read, delete | VirtualNetwork, ExternalIP, and all other gateway `spec` fields are fixed after creation; changing the ExternalIP requires delete and create. |
-| `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` | Set on parent create, read with the parent, delete with the parent | The complete attachment list and every entry field, including Subnet, SecurityGroups, and `primary`, are fixed after parent creation. |
+| `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` | Set on parent create, read with the parent, delete with the parent | The list is retained for API compatibility but accepts zero or one entry only. The complete list and every entry field, including Subnet, SecurityGroups, and `primary`, are fixed after parent creation. |
 | `Cluster.network_attachment` | Set on parent create, read with the parent, delete with the parent | The complete attachment and every entry field, including Subnet and SecurityGroups, are fixed after parent creation. |
 | `BaremetalInstance.network_attachments` | Set on parent create, read with the parent, delete with the parent | The complete list and every entry field, including Subnet, SecurityGroups, interface, and primary designation, are fixed after parent creation; at most one entry is supported. |
 | `auto_external_ip_attachment` on ComputeInstance, Cluster, and BaremetalInstance | Set on parent create, read with the parent, delete with the parent | This network-owned create-time switch is fixed after parent creation; changing automatic external access requires delete and recreate. |
@@ -184,10 +184,10 @@ arbitrary strings:
 
 | Field | Wire type / presence | Allowed values and validation |
 |---|---|---|
-| `ComputeInstance.compute_network_attachments` | Repeated `ComputeNetworkAttachment`, optional | Missing or empty uses both tenant defaults. A non-empty list contains unique entries; each entry may omit individual fields for field-level defaulting, and all resolved Subnets must belong to one VN. |
+| `ComputeInstance.compute_network_attachments` | Repeated `ComputeNetworkAttachment`, optional | Missing or empty uses both tenant defaults. A supplied list contains zero or one entry only; more than one entry is rejected. The entry may omit individual fields for field-level defaulting. |
 | `ComputeNetworkAttachment.subnet` | Local Subnet reference, optional at request and required after resolution | If omitted, resolve only the tenant default Subnet. If supplied, it must exist and be `Ready`. |
 | `ComputeNetworkAttachment.security_groups` | Repeated local SecurityGroup references, optional | Missing or empty resolves only the tenant default SecurityGroup. A non-empty list uses exactly the supplied groups; every group must be same-VN and `Ready`, with no duplicates. |
-| `ComputeNetworkAttachment.primary` | Optional boolean | With one attachment, omission or `true` makes it primary and explicit `false` is rejected. With multiple attachments, exactly one entry must be `true`; omitted entries are non-primary. |
+| `ComputeNetworkAttachment.primary` | Optional boolean | With the supported single attachment, omission or `true` makes it primary; explicit `false` is rejected. Multi-interface primary selection is deferred. |
 | `Cluster.network_attachment` | `ClusterNetworkAttachment`, optional | Missing or an empty message uses both tenant defaults. When present, exactly one resolved attachment applies to every node set; missing subnet and SecurityGroups are defaulted independently. |
 | `BaremetalInstance.network_attachments` | Repeated `BareMetalNetworkAttachment`, optional | Missing or empty uses both tenant defaults. A non-empty list must contain exactly one entry; its subnet and SecurityGroups are defaulted independently when omitted. |
 | `BareMetalNetworkAttachment.interface` | String reference/name, optional | If set, it must identify a valid non-lifecycle port. If omitted, BMaaS selects the first valid `fabric` port from the effective BareMetalInstanceType. |
@@ -862,7 +862,7 @@ precondition checks and requeue:
 
 | Target type | Required precondition | Source of target IP |
 |-------------|----------------------|---------------------|
-| ComputeInstance | `compute_network_attachment_statuses` populated with primary attachment's `ip_address` | Feedback controller reads KubeVirt VMI network status, writes `ComputeNetworkAttachmentStatus` per attachment |
+| ComputeInstance | `compute_network_attachment_statuses` populated with the single attachment's `ip_address` | Feedback controller reads the sole KubeVirt VMI interface status and writes at most one `ComputeNetworkAttachmentStatus` |
 | Cluster | `status.apiEndpoint` or `status.ingressEndpoint` populated on ClusterOrder CR | MetalLB allocates VIP from IPAddressPool, template discovers and writes to ClusterOrder status |
 | BaremetalInstance | the single `status.networkAttachmentStatuses[].ipAddress` populated for the selected interface | Operator queries fabric manager's DHCP lease API via dispatcher (`query_dhcp_lease` role) after provisioning completes; matches the selected port MAC (from the BareMetalHost `osac.openshift.io/interface-macs` annotation) to the assigned IP; operator writes to CR status |
 
@@ -1092,9 +1092,12 @@ message ComputeNetworkAttachment {
 }
 ```
 
-Each entry maps one virtual NIC to one subnet. Multiple entries create
-a multi-homed VM. See the [VMaaS networking design](/enhancements/OSAC-1435-vmaas-networking/design.md)
-for primary designation and default gateway semantics.
+The list is retained to avoid a future API shape change, but the supported
+cardinality is zero or one entry. A single entry maps one virtual NIC to one
+subnet and is implicitly primary when `primary` is omitted. More than one
+entry is rejected until multi-interface VM support is implemented and tested.
+See the [VMaaS networking design](/enhancements/OSAC-1435-vmaas-networking/design.md)
+for the service-specific validation.
 
 **BareMetalNetworkAttachment** (for BaremetalInstance):
 
@@ -1212,12 +1215,14 @@ message ComputeNetworkAttachmentStatus {
 message ComputeInstanceStatus {
   // ... existing fields ...
   repeated ComputeNetworkAttachmentStatus compute_network_attachment_statuses = N;
+  // VMaaS currently populates zero or one status entry; additional interfaces
+  // remain deferred until implemented and tested.
 }
 ```
 
-Feedback controller watches KubeVirt VMI `status.interfaces[].ipAddress`,
-maps each interface to the corresponding attachment by CUDN NAD reference,
-and fires Signal RPC to fulfillment-service.
+Feedback controller watches the sole KubeVirt VMI interface in
+`status.interfaces[].ipAddress`, maps it to the single attachment by CUDN NAD
+reference, and fires Signal RPC to fulfillment-service.
 
 **BaremetalInstanceStatus:**
 
@@ -1372,11 +1377,12 @@ Per-subnet NAT association is a future enhancement.
 
 #### Attachment cardinality and primary behavior
 
-ComputeInstance supports multiple `compute_network_attachments` (virtual
-NICs). All subnets must belong to the same VN, and VM primary-attachment
-behavior is defined by the VMaaS design. The deprecated shared
-`network_attachments` field is a migration compatibility path, not the
-canonical Catalog policy field.
+ComputeInstance retains repeated `compute_network_attachments` and deprecated
+`network_attachments` fields for API compatibility, but both accept zero or
+one entry only. A supplied entry is implicitly primary when `primary` is
+omitted; explicit `primary: false` and a list with more than one entry are
+rejected. Multi-interface VM support is deferred, and the deprecated field is
+a migration compatibility path rather than the canonical Catalog policy field.
 
 BaremetalInstance retains the repeated `network_attachments` API field for
 compatibility, but accepts at most one entry. When present, that entry is

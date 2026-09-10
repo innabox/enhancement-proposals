@@ -32,7 +32,7 @@ This design extends OSAC-1433's NetworkClass two-manager architecture with a new
 
 This design builds on and interacts with several networking designs:
 
-- **OSAC-1435 VMaaS Networking** — VMs provisioned via `ComputeNetworkAttachment` consume the cudn_evpn namespaces created by this design. VMaaS placement logic must resolve the namespace name (same as subnet name) when placing VMs in EVPN-bridged Subnets. VMaaS must validate that the target Subnet has a CUDN (first subnet only) before allowing VM placement.
+- **OSAC-1435 VMaaS Networking** — VMs provisioned via the list-shaped `ComputeNetworkAttachment` field consume the cudn_evpn namespaces created by this design. The field accepts zero or one entry only; VMaaS placement logic must resolve the namespace name (same as subnet name) when placing a VM in an EVPN-bridged Subnet and validate that the target Subnet has a CUDN (first subnet only) before allowing VM placement.
 - **OSAC-1436 CaaS Networking** — CaaS clusters may run on EVPN-bridged subnets. Port-move primitive compatibility with EVPN transport (VXLAN encap vs VLAN trunking) is TBD (out of scope for Phase 1).
 - **OSAC-1437 BMaaS Networking** — Bare-metal servers provisioned via `BareMetalNetworkAttachment` are L2/L3 peers of EVPN-bridged VMs. This design validates same-subnet (L2) and cross-subnet (L3 via fabric ipVRF) connectivity in test cases.
 - **OSAC-1433 Default Networking** — Auto-provisioning of VN/Subnet/SG/NAT at tenant onboarding uses a default NetworkClass. `cudn_evpn` is **not suitable** as the default NetworkClass due to manual prerequisites (VTEP, FRR, BGP underlay). Default networking should use a simpler k8s manager (e.g., k8s-only or none).

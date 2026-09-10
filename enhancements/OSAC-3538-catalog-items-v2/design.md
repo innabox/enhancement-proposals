@@ -386,7 +386,7 @@ Protobuf requires a message wrapper when a list appears inside a policy `oneof`.
 
 ```protobuf
 message ComputeNetworkAttachmentList {
-  repeated ComputeNetworkAttachment items = 1;
+  repeated ComputeNetworkAttachment items = 1; // zero or one item for now
 }
 
 message ComputeNetworkAttachmentListFieldPolicy {
@@ -665,7 +665,7 @@ Notes on the fields above:
   `ComputeInstanceSpec.run_strategy` and `ComputeInstanceTemplateSpecDefaults.run_strategy` remain optional, and a supplied value must be defined and non-zero. The config-as-code client maps the friendly value in `meta/osac.yaml` to the enum, and the Ansible metadata stays unchanged.
 - `storage_tier` and `additional_disks` stay ordinary resource fields until `storage_tier` becomes a typed reference.
 - `compute_network_attachments` is the canonical Compute field. The deprecated shared `network_attachments` field is not a separate Catalog policy surface; a compatibility path may translate it before policy resolution.
-- Compute attachment policy governs the complete list. A single attachment is implicitly primary when `primary` is omitted; a list with multiple attachments must contain exactly one `primary: true` entry. Catalog validation applies the same rule as direct Compute creation.
+- Compute attachment policy governs the complete list. The list remains list-shaped for API compatibility but accepts zero or one attachment only. A single attachment is implicitly primary when `primary` is omitted; explicit `primary: false` and more than one attachment are rejected. Catalog validation applies the same rule as direct Compute creation.
 - Network attachment policy references use the Catalog Item's scope, so a tenant-owned item may reference its own Subnets and SecurityGroups.
 
 ### Cluster
@@ -1120,6 +1120,9 @@ Infrastructure: fulfillment-service Ginkgo suite (`ginkgo run -r internal`), whi
 - Locked policy with an omitted tenant list applies the locked value.
 - Locked policy with an explicitly empty tenant list applies the locked value.
 - Locked policy with a non-empty tenant list returns `InvalidArgument`.
+- A Compute attachment policy containing more than one item, or a sole item
+  with `primary: false`, returns `InvalidArgument` under the direct Compute
+  validation contract.
 - Empty `locked` value or empty editable default is rejected at Catalog Item Create and Update for Compute and Bare Metal attachment lists, whose resource semantics treat empty as unset.
 - Default network resolution runs after Catalog resolution and triggers whenever the resolved attachment remains unset after tenant input, Catalog policy, and Template defaults, including an editable policy with no Catalog default that the tenant did not supply.
 
@@ -1181,7 +1184,7 @@ Infrastructure: fulfillment-service `it/` suite against a real kind cluster (cre
 Infrastructure: osac-test-infra pytest against the full stack, fulfillment service through the operator and AAP to real infrastructure. Uses the existing `catalog`, `vmaas`, `caas`, and `bmaas` suites.
 
 - Catalog-based provisioning succeeds end-to-end and materializes `spec.template`:
-  - ComputeInstance (vmaas) resolves a `compute_network_attachments` Catalog list policy, including primary-attachment validation, into the ordinary resource list.
+  - ComputeInstance (vmaas) resolves a `compute_network_attachments` Catalog list policy, including zero-or-one cardinality and single-attachment primary validation, into the ordinary resource list.
   - Cluster (caas) resolves a governed `network_attachment` policy while keeping `fabric_interface` system-resolved.
   - BareMetalInstance (bmaas) resolves a single `network_attachments` policy, including interface and implicit-primary validation, through Catalog Item creation.
 - A locked Catalog network value rejects conflicting tenant input; an editable value accepts tenant input and otherwise falls through to Catalog, Template, and tenant default networking in that order.

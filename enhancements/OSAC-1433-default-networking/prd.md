@@ -120,8 +120,9 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
   Cluster, and BaremetalInstance is optional. When omitted or empty, the
   system populates both the tenant's default Subnet and default SecurityGroup.
   The resolved attachments are stored with the resource so the resource is
-  self-describing after creation. For BMaaS, resolution produces exactly one
-  tenant network attachment. [User]
+  self-describing after creation. For VMaaS, ComputeInstance retains its
+  list-shaped field but accepts at most one attachment. For BMaaS, resolution
+  produces exactly one tenant network attachment. [User]
 - **FR-7:** When an attachment supplies only some network fields, the system
   defaults only the missing fields. A supplied Subnet or non-empty
   SecurityGroup list is preserved unchanged. [User]
@@ -198,6 +199,8 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
   resolved default attachments when retrieved via the API
 - [ ] Creating a BaremetalInstance with more than one explicit network
   attachment returns a single-NIC validation error
+- [ ] Creating a ComputeInstance with more than one explicit network
+  attachment returns a single-interface validation error
 
 ## 6. Dependencies
 

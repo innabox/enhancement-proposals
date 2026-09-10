@@ -29,7 +29,7 @@ superseded-by:
 
 - **BareMetalInstance** provisioning (separate PRD)
 - **Template parameters**
-- **Multi-NIC** — wizard submits one `network_attachments` entry (one VN, one subnet, security groups); no add/remove NIC rows
+- **VM networking** — wizard submits one list-shaped `network_attachments` entry (one VN, one subnet, security groups); no add/remove NIC rows
 - **Cluster template `node_sets` defaults** — the wizard does **not** load, display, or apply `ClusterTemplate.spec.node_sets` (`host_type` or `size` defaults)
 - **`spec.additional_disks`** — wizard scope undecided ([§5](#5-open-decisions)); default: boot disk only
 

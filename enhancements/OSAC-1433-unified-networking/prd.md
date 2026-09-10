@@ -405,6 +405,7 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 - [ ] Network resources expose create, read/list, and delete operations only; user/API update, patch, and replace requests for network-owned `spec` fields are rejected or not exposed
 - [ ] All network-owned `spec` fields on NetworkClass, VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool, ExternalIP, ExternalIPAttachment, and NATGateway are immutable after creation
 - [ ] `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` are immutable as complete lists, including every attachment field
+- [ ] `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` retain list-shaped APIs but accept zero or one entry only; requests with more than one entry are rejected
 - [ ] `Cluster.network_attachment` and `BaremetalInstance.network_attachments` are immutable, including every attachment field
 - [ ] `auto_external_ip_attachment` is immutable after workload creation; changing it requires delete and recreate
 - [ ] Every network-owned field documents its wire type, format, presence/default behavior, allowed values, reference scope, and cross-field validation
@@ -438,6 +439,13 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 - [ ] Bare-metal network attachments include an optional interface reference that identifies a named port from the BareMetalInstanceType
 - [ ] Bare-metal servers accept at most one `network_attachments` entry, using one valid physical interface
 - [ ] All referenced subnets must belong to the same VirtualNetwork
+
+### Resource-Specific (VMaaS)
+
+- [ ] `ComputeInstance.compute_network_attachments` remains a repeated/list field for API compatibility but accepts zero or one entry only
+- [ ] The deprecated `ComputeInstance.network_attachments` compatibility field follows the same zero-or-one cardinality when supplied alone
+- [ ] A single VM attachment is implicitly primary when `primary` is omitted; explicit `primary: false` and more than one entry are rejected
+- [ ] Multi-interface VM support is deferred until it has an implemented and tested contract
 
 ## 6. Dependencies
 

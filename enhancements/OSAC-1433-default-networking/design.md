@@ -80,7 +80,7 @@ does not permit updating the resolved network attachment or any other
 network-owned field after the workload is created.
 
 The field is resource-specific: Compute uses
-`compute_network_attachments`, Cluster uses the singular
+`compute_network_attachments` with at most one entry, Cluster uses the singular
 `network_attachment`, and BaremetalInstance uses `network_attachments` with
 at most one attachment. Catalog validation uses the same readiness, VirtualNetwork,
 cardinality, primary, and physical-interface rules as direct resource creation.
@@ -362,7 +362,7 @@ type ClusterSpec struct {
 - The deployment-wide permit baseline is provider-owned and is not stored in the tenant default SecurityGroup
 
 **Resource creation with optional network attachments:**
-- For ComputeInstance, if `compute_network_attachments` is omitted or empty, resolve both the tenant's default Subnet and SecurityGroup (labeled `osac.openshift.io/default: "true"`). For each supplied attachment, default only the missing subnet or missing/empty SecurityGroup list.
+- For ComputeInstance, if `compute_network_attachments` is omitted or empty, resolve both the tenant's default Subnet and SecurityGroup (labeled `osac.openshift.io/default: "true"`). A supplied list may contain at most one entry; default only that entry's missing subnet or missing/empty SecurityGroup list, and reject a second entry.
 - For Cluster, if `network_attachment` is omitted or an empty message, resolve both defaults. If the message supplies only one field, default only the other field.
 - For BaremetalInstance, if `network_attachments` is omitted or empty, resolve both defaults and the first default fabric interface from the BareMetalInstanceType. For a supplied single entry, default only missing subnet, SecurityGroup list, or interface.
 - If no defaults exist (should not occur — defaults are mandatory on NetworkClass): return error `No default networking resources available. Please contact your administrator.`
@@ -572,6 +572,7 @@ Resolved: Return error, no resource persisted.
 
 - fulfillment-service: NetworkClass defaults validation (required canonical CIDR fields and conditional MetalLB prefix)
 - fulfillment-service: resource-specific network-field population (Compute `compute_network_attachments`, Cluster `network_attachment`, Bare Metal `network_attachments`) for omitted, empty, and partially specified attachments, preserving explicit values
+- fulfillment-service: Compute list cardinality validation (zero or one entry; reject more than one) and single-entry primary validation
 - fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
 - fulfillment-service: capacity exhaustion error (return error, resource not persisted)
 - fulfillment-service: default resource creation at tenant onboarding (VN, IPv4 Subnet, SG, and NATGateway with default label when supported)
@@ -589,6 +590,7 @@ Resolved: Return error, no resource persisted.
 - E2E: create Cluster with `--external-ip-attachment`, verify two ExternalIPs created BEFORE provisioning, cluster VIPs match
 - E2E: delete ComputeInstance with auto-created resources, verify ExternalIPAttachment and ExternalIP cleaned up
 - E2E: create ComputeInstance with explicit complete and partial `compute_network_attachments`, verify supplied fields are preserved and only missing fields are defaulted
+- E2E: create ComputeInstance with more than one `compute_network_attachments` entry, verify the single-interface validation error
 - E2E: create each resource type through a Catalog Item, verify locked and create-time editable network policy precedence relative to tenant defaults
 - E2E: create ComputeInstance with `--external-ip-attachment` when pool exhausted, verify error returned, resource not persisted
 - E2E: update or patch of a default network resource is rejected, and delete is blocked while dependencies exist
