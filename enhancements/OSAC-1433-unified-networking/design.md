@@ -63,6 +63,11 @@ not support multi-NIC or multi-homed tenant attachments.
 For user stories, goals, and non-goals, see the
 [Requirements Document (PRD)](prd.md).
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Proposal
 
 ### NetworkClass

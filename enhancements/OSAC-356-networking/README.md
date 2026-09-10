@@ -34,6 +34,11 @@ be consumed by multiple services. **Compute Instance (VMaaS) will be the first
 service to integrate with this API**, with Cluster-as-a-Service and
 BareMetal-as-a-Service planned for future integration.
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Terminology
 
 This section defines the key networking terms used throughout this enhancement:

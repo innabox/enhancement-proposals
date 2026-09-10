@@ -35,6 +35,11 @@ associated provisioning CRs follow the unified networking reconciliation path
 through that hub. Hosting clusters are workload targets and are not additional
 hubs.
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Motivation
 
 Clusters require tenant-controlled networking to enable:

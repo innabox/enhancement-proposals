@@ -45,6 +45,11 @@ their associated provisioning CRs follow the unified networking reconciliation
 path through that hub. Bare-metal servers and fabric switches are data-plane
 infrastructure, not additional hubs.
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Motivation
 
 Bare-metal servers require explicit switch port configuration to participate in the OSAC Networking API. Unlike VMs (which live inside an OVN overlay bridged to the fabric), BM servers connect directly to the physical fabric — the selected tenant NIC's switch port must be moved between network segments during the provisioning lifecycle.

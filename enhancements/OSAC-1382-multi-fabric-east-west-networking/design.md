@@ -47,6 +47,11 @@ deployments are not supported. FabricDomain, VirtualNetwork, and Subnet
 resources are reconciled through that hub; the fabric and workload servers
 remain data-plane infrastructure rather than additional hubs.
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Motivation
 
 High-performance workloads need high-bandwidth, low-latency east-west

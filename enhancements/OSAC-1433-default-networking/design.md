@@ -33,6 +33,11 @@ deployments are not supported. The default VirtualNetwork, Subnet,
 SecurityGroup, NATGateway, and ExternalIP resources created during tenant
 onboarding follow the unified networking reconciliation path through that hub.
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Motivation
 
 A reachable resource in OSAC requires networking resources: VirtualNetwork, Subnet, SecurityGroup, the resource itself, ExternalIP, and ExternalIPAttachment. Default networking eliminates this friction — a single create command produces a reachable instance by leveraging tenant defaults provisioned at onboarding.

@@ -34,6 +34,11 @@ ExternalIP resources used by VMaaS follow the unified networking
 reconciliation path through that hub. Hosting clusters may still be distinct
 workload targets for the K8s overlay.
 
+> **Current implementation boundary:** The current OSAC implementation supports
+> connected deployments only; air-gapped deployments are not currently
+> supported. The remainder of this document describes the desired-state
+> architecture.
+
 ## Motivation
 
 ComputeInstance already participates in the networking API. Today's flow:
