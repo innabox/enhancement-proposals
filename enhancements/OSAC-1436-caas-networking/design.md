@@ -358,10 +358,118 @@ Migration adds to clusters table:
 
 #### Server Validation
 
-- network_attachment: omitted/empty and partial field defaulting follow the shared contract; every resolved Subnet and SecurityGroup exists, is Ready, and belongs to the same VirtualNetwork
-- Each node set's `baremetal_instance_type` must have at least one `network_ports` entry with `role=fabric` for fabric_interface resolution
-- Immutability: the complete Cluster attachment and every field, including SecurityGroup membership, are immutable after creation; changing network configuration requires deleting and recreating the Cluster
-- target_endpoint validation on ExternalIPAttachment: required when target is cluster, must be `API` or `INGRESS`
+CaaS applies the shared [Unified Networking validation
+pipeline](/enhancements/OSAC-1433-unified-networking/design.md#validation-and-enforcement-pipeline)
+and adds cluster-wide and
+node-set-specific checks. Validation runs before creating the Cluster and
+again before creating any private BMaaS worker request.
+
+**Cluster attachment shape and defaulting:**
+
+- `network_attachment` is singular. The API accepts an omitted field or an
+  empty message for default resolution, but it rejects any legacy/repeated
+  representation that attempts to supply more than one tenant attachment.
+- A supplied attachment may contain only the shared `subnet` and
+  `security_groups` fields. `fabric_interface`, physical port names, and
+  per-node-set attachment selectors are not tenant input and are rejected if
+  they appear in the public Cluster request.
+- Omitted/empty input resolves both tenant defaults. A partial message fills
+  only the missing Subnet or missing/empty SecurityGroup list. Supplied
+  fields are preserved exactly.
+- After resolution, the Subnet and every SecurityGroup must exist, be Ready,
+  be IPv4, be in the effective tenant/project, and belong to one
+  VirtualNetwork. Duplicated SecurityGroup references and cross-VirtualNetwork
+  combinations are rejected.
+- The resolved attachment is stored once in `ClusterOrder.spec.networkAttachments[0]`.
+  The worker controller must not append a second tenant attachment while
+  enriching worker requests.
+
+**Cluster and node-set validation:**
+
+- The selected Cluster Template must be compatible with the supported CaaS
+  node model. v0.2 accepts BM node sets only; VM-based node sets and a
+  multi-NIC node request are rejected before networking resources are
+  created.
+- Every node set must identify a valid `baremetal_instance_type` in the
+  permitted scope. The referenced BareMetalInstanceType must be Ready/usable,
+  contain at least one ordered port with role `fabric`, and contain no
+  malformed port definitions.
+- For each node set, fulfillment-service selects the first ordered `fabric`
+  port and persists it as the immutable `fabric_interface`. It must reject a
+  missing fabric port, a lifecycle-only profile, or a node set whose
+  interface cannot be represented in the BMaaS attachment contract.
+- The tenant cannot select or override `fabric_interface`. Catalog policy,
+  Template defaults, and tenant network input may govern only the tenant
+  Subnet and SecurityGroup fields.
+- The same resolved Subnet applies to every node set. Per-node-set Subnet,
+  SecurityGroup, or tenant-interface overrides are rejected. The node set's
+  stored `fabric_interface` may differ by BareMetalInstanceType, but it does
+  not create another tenant network attachment.
+- The resolved attachment and every network-owned nested field are immutable
+  after Cluster creation. Changing them requires deleting and recreating the
+  Cluster; changing a BareMetalInstanceType later does not re-resolve an
+  existing Cluster's stored interface.
+
+**Private BMaaS worker validation:**
+
+- Every worker create request contains exactly one
+  `BareMetalNetworkAttachment` with the Cluster Subnet, Cluster
+  SecurityGroups, the immutable node-set `fabric_interface`, and implicit
+  `primary: true`.
+- BMaaS remains authoritative for the final physical-interface validation:
+  the port must still exist in the referenced BareMetalInstanceType, be
+  tenant-attachable, and not have role `lifecycle`. A private caller cannot
+  bypass BMaaS validation by using the ClusterOrder CR directly.
+- The worker controller does not re-resolve the interface after ClusterOrder
+  creation. If the stored interface becomes unavailable, worker provisioning
+  fails/retries with a clear condition; it does not silently choose another
+  port.
+- Worker deletion waits for BMaaS to remove the worker and return the selected
+  port to the provisioning network. The ClusterOrder finalizer must not
+  release the Subnet or related network resources while worker BMIs remain.
+
+**External access and VIP validation:**
+
+- `auto_external_ip_attachment` is create-time-only. When true, the request
+  must reserve two IPv4 ExternalIPs atomically: one for `API` and one for
+  `INGRESS`. Pool exhaustion or inability to reserve two addresses rejects
+  the entire Cluster create and leaves no parent or child records.
+- The two ExternalIPs must be distinct, and each ExternalIPAttachment must
+  reference the same Cluster with the matching endpoint enum. A Cluster
+  target with `UNSPECIFIED`, a Compute/BM target with `API`/`INGRESS`, or
+  duplicate API/Ingress attachments is rejected.
+- ExternalIPAttachment dispatch waits independently for the corresponding
+  ExternalIP to be `Allocated` and the matching ClusterOrder endpoint to be
+  populated. API DNAT uses only `status.apiEndpoint`; ingress DNAT uses only
+  `status.ingressEndpoint`.
+- Each discovered endpoint must be canonical IPv4, belong to the resolved
+  Subnet/MetalLB address pool, be distinct from the other endpoint, and be
+  stable for the lifetime of the Cluster. Empty, IPv6, duplicate, or
+  out-of-subnet endpoint status is rejected and does not activate DNAT.
+- The template must not report the Cluster Ready before the required VIP
+  resources and endpoint statuses are available. The ExternalIPAttachment
+  controller requeues rather than dispatching DNAT with an empty endpoint.
+
+**Validation errors and tests:**
+
+- Field paths identify the failure: `spec.network_attachment.subnet`,
+  `spec.network_attachment.security_groups[0]`,
+  `spec.node_sets[<name>].baremetal_instance_type`, or the corresponding
+  `target_endpoint` field.
+- Unit tests reject a repeated/multi-attachment request, unsupported VM node
+  set, missing/default-not-Ready network resource, cross-VN reference,
+  missing fabric port, lifecycle interface, tenant `fabric_interface`, and
+  post-create network mutation.
+- Integration tests verify one ClusterOrder attachment, different stored
+  fabric interfaces for different node-set types, exactly one BM attachment
+  per worker, and no second attachment after worker reconciliation.
+- ExternalIP tests cover failure to reserve two addresses, duplicate API or
+  ingress endpoint values, wrong endpoint enum, endpoint status arriving
+  before ExternalIP allocation, and successful independent API/ingress
+  requeue-to-Ready transitions.
+- Delete tests prove the Cluster finalizer waits for worker BMI deletion and
+  auto-created ExternalIPAttachment/ExternalIP cleanup before releasing
+  dependent network resources.
 
 #### Catalog Item interaction
 

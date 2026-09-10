@@ -411,6 +411,102 @@ Solution: Delete VMs first or create a new VirtualNetwork for bare-metal workloa
 - Clear error messages guide tenant to correct topology
 - Single subnet topology works seamlessly (CUDN always provisioned)
 
+#### Phase 1 validation contract
+
+The EVPN manager is prerequisite-gated and inherits the shared
+[Unified Networking validation pipeline](/enhancements/OSAC-1433-unified-networking/design.md#validation-and-enforcement-pipeline).
+These additional rules are mandatory whenever the resolved NetworkClass uses
+`k8s_manager: cudn_evpn`:
+
+**Manager and resource capability:**
+
+- `cudn_evpn` may be selected only by a provider and only after its required
+  VTEP, FRR, BGP, fabric, and hosting-cluster prerequisites are registered as
+  available. A tenant cannot select the manager through a VirtualNetwork or
+  bypass the NetworkClass capability check.
+- The manager advertises IPv4-only, create/read/delete support for
+  VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool, ExternalIP, and
+  ExternalIPAttachment. NATGateway is rejected because Phase 1 does not
+  provide the OVN NAT capability.
+- A NetworkClass or Subnet must not become Ready merely because the Netris
+  fabric side succeeded. For a VM-capable first Subnet, the CUDN, namespace,
+  bridge, and MetalLB IPAddressPool prerequisites must also be confirmed.
+  Any missing or failed prerequisite leaves the Subnet Pending/Failed and
+  blocks VM placement.
+
+**VirtualNetwork and Subnet topology:**
+
+- The first Subnet under a VirtualNetwork is the only Subnet that receives a
+  CUDN and VM-capable overlay in Phase 1. Its CIDR must pass the shared IPv4
+  containment/non-overlap rules and the CUDN/MetalLB allocation ranges must
+  remain within that Subnet.
+- A second or later Subnet may be created only while the first Subnet has no
+  VMs. Such a Subnet is fabric-only: it receives no CUDN, no VM namespace,
+  and no MetalLB IPAddressPool. Its fabric provisioning must not be mistaken
+  for VM readiness.
+- Once any VM exists in the first Subnet, creation of another Subnet under the
+  same VirtualNetwork is rejected at the API with `FailedPrecondition`. The
+  check must be race-safe with Subnet creation and VM creation so two
+  concurrent requests cannot create an unsupported topology.
+- If the VirtualNetwork has more than one Subnet, VM creation is rejected in
+  every Subnet, including the first one. Deleting a VM does not automatically
+  convert an already-created fabric-only Subnet into a VM-capable CUDN;
+  topology changes require a new supported create flow.
+- A provider-only fabric-skip annotation may select fabric-only behavior, but
+  it is not tenant input. A tenant request cannot use an annotation or hidden
+  field to bypass the single-subnet VM rule.
+
+**VM placement:**
+
+- VMaaS must validate the EVPN topology before persisting the ComputeInstance:
+  one Subnet under the VN, the selected Subnet is the first CUDN-capable
+  Subnet, the CUDN namespace exists or is in a permitted Ready transition,
+  and the VM attachment has at most one entry.
+- A VM attachment that references a fabric-only Subnet, a Subnet without a
+  Ready CUDN, or a VirtualNetwork with multiple Subnets is rejected. The
+  validation must not fall back to the first Subnet or silently move the VM.
+- The resolved VM Subnet and SecurityGroups still obey the shared same-VN,
+  Ready, IPv4, and immutable attachment rules. EVPN placement adds topology
+  restrictions; it does not change shared field formats or defaulting.
+- The AAP template receives exactly one CUDN NAD reference and must fail
+  closed if that reference is absent, points at another namespace, or would
+  produce more than one VM interface.
+
+**Status, deletion, and manager handoff:**
+
+- The manager reports the CUDN/namespace/IPAddressPool readiness associated
+  with the exact Subnet and VirtualNetwork. A status from another subnet or
+  hosting cluster cannot satisfy the selected Subnet's readiness.
+- Deleting the first CUDN-capable Subnet is blocked until all VMs and other
+  dependent resources are removed. Deleting a fabric-only Subnet must skip
+  CUDN deprovision but still remove its fabric segment; deletion of the VN
+  waits for every child Subnet.
+- If fabric provisioning succeeds and CUDN provisioning fails, recovery may
+  retry the missing manager operation, but it must not mark the Subnet Ready
+  or allow VM placement. If CUDN deletion succeeds and fabric deletion fails,
+  the Subnet remains in a failed deletion state and is not reported gone.
+- ExternalIPAttachment for a VM follows the VM IP preconditions from the
+  shared and VMaaS designs. EVPN does not permit DNAT to an unknown CUDN IP.
+
+**EVPN validation tests:**
+
+- reject an unregistered or capability-incomplete `cudn_evpn` manager,
+  NATGateway creation, IPv6/dual-stack values, malformed/overlapping CIDRs,
+  and tenant attempts to set provider-only topology controls;
+- verify first-Subnet provisioning waits for fabric, CUDN namespace/bridge,
+  and MetalLB IPAddressPool readiness;
+- allow a second fabric-only Subnet when the first has no VMs, reject it when
+  any VM exists, and verify concurrent create behavior is serialized;
+- reject VM placement in every Subnet once the VN has multiple Subnets,
+  reject a VM in a fabric-only or non-Ready CUDN Subnet, and accept exactly
+  one VM attachment in the supported topology;
+- verify the template uses the selected Subnet's CUDN and fails closed on a
+  missing or mismatched namespace/NAD;
+- verify status and deletion behavior for first and later Subnets, including
+  retry after one manager fails and dependency blocking while VMs exist; and
+- verify ExternalIPAttachment waits for both ExternalIP allocation and the
+  VM's discovered CUDN IP.
+
 #### osac-operator: Sequential Provisioning
 
 **Provisioning Package Extension:**
@@ -1102,7 +1198,6 @@ data:
 The `single_subnet_for_vms` capability is checked by fulfillment-service Subnet
 validation (see Subnet Validation section above) to make the VM topology
 constraint pluggable for future k8s managers.
-```
 
 **RBAC:**
 

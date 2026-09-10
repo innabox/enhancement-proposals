@@ -199,6 +199,311 @@ default, or validation rule for these shared fields. Service-specific designs
 may add only placement, cardinality, or lifecycle constraints for their own
 attachment message.
 
+### Validation and enforcement pipeline
+
+The validation rules above are normative. A tenant must not be able to reach a
+backend manager with a value that the API contract has already declared
+unsupported. Validation is therefore performed in layers, with each layer
+owning a different class of invariant:
+
+| Layer | Enforcement point | Rules owned by the layer | Failure behavior |
+|---|---|---|---|
+| Request shape | Protobuf/protovalidate and REST gateway | Required fields, `oneof` selection, scalar types, enum membership, repeated-field cardinality that is expressible in the schema, and malformed values | Reject the request before a database write with `InvalidArgument`; do not normalize an invalid value into a valid one. |
+| Tenant/provider authorization | API handler and OPA/RBAC policy | Provider-only NetworkClass access, tenant/project scope, visibility of references, and operation authorization | Return `PermissionDenied` or `NotFound` according to the platform's existing resource-visibility policy; do not leak another tenant's resource. |
+| Semantic API validation | fulfillment-service private server | Canonical formatting, reference type and scope, readiness, uniqueness, cross-field rules, manager capability, and service-specific attachment rules | Return `InvalidArgument` for malformed/contradictory input and `FailedPrecondition` for an existing object that is not in the required state. Persist nothing from a rejected create. |
+| Transactional validation | fulfillment-service database transaction | Uniqueness races, ExternalIP capacity reservation, one-consumer constraints, reverse-reference protection, and atomic parent/auto-created-resource creation | Abort the transaction. A failed capacity or uniqueness check leaves neither a partial parent resource nor an orphaned auto-created network resource. |
+| Resource CRD validation | Operator CRD schema and CEL rules | The same cardinality and immutable-field rules at the hub-cluster boundary, including every network-owned nested field | Reject an invalid or mutated CR before reconciliation. CRD validation is defense in depth; it must not be weaker than the fulfillment-service contract. |
+| Reconciliation preconditions | osac-operator and service-specific controllers | Dependency readiness, discovered target IPs, manager handoff ordering, and status-to-spec consistency | Do not dispatch a backend operation prematurely. Set a condition and requeue while the dependency is Pending; set Failed only for a terminal, contract-valid provisioning failure. |
+| Backend capability enforcement | Dispatcher and configured manager | The selected manager advertises the requested resource and operation, and returns only contract-valid allocation/status data | Reject unsupported operations before dispatch. Treat a manager response with an invalid family, address, or state transition as a provisioning failure and do not mark the resource Ready. |
+
+Validation is applied in the following order for every user create request:
+
+1. Authenticate the caller and establish the effective tenant/project and
+   provider scope.
+2. Validate the request envelope, protobuf presence, oneofs, enums, repeated
+   fields, and canonical formats.
+3. Resolve compatibility fields and Catalog/Template values without changing
+   the meaning of an explicitly supplied value. For ComputeInstance, the old
+   `network_attachments` field is converted to the canonical representation
+   before the final Compute validation; supplying both fields is rejected.
+4. Resolve omitted or empty workload attachment fields using the documented
+   tenant defaults. Defaulting is field-level: a supplied subnet or non-empty
+   SecurityGroup list is never replaced.
+5. Validate every resolved reference for existence, type, scope, readiness,
+   and relationship to the other resolved references.
+6. Validate cross-resource and manager-capability rules, including address
+   family, CIDR containment/non-overlap, attachment cardinality, target
+   endpoint rules, and one-consumer constraints.
+7. Reserve any scarce capacity and persist the complete resolved spec in one
+   transaction. If automatic ExternalIP resources are requested, persist the
+   parent and its Pending children atomically.
+8. Reconcile only after persistence. Controllers re-check readiness and
+   manager capability before every backend dispatch because state may change
+   between API persistence and reconciliation.
+
+The API distinguishes values that are absent, empty, and explicitly false:
+
+- An omitted optional attachment field and an empty repeated attachment field
+  invoke the documented defaulting behavior. They are not a request to bypass
+  networking or to clear a default.
+- An attachment message supplied with only one of `subnet` or
+  `security_groups` receives a default only for the missing field.
+- An explicitly supplied reference, including a tenant-local reference that
+  happens to equal the default, remains an explicit value and is validated as
+  such.
+- An explicitly supplied `primary: false` is not treated as omission and is
+  rejected by the single-attachment contracts.
+- An explicitly supplied unsupported enum, IPv6 value, second list entry, or
+  unknown reference is rejected; clients and agents must not silently drop it.
+
+#### Shared validation matrix
+
+The following checks are required in addition to the field table. They are
+shared by all service-specific designs and must be reused by direct creates,
+Catalog-based creates, Template-default resolution, and private service-to-
+service creates.
+
+**NetworkClass.** The provider validation path must:
+
+- enforce exactly one deployment NetworkClass and reject a second active
+  NetworkClass for the same deployment;
+- reject tenant create, update, patch, or delete attempts because
+  NetworkClass is provider-owned;
+- require at least one of `fabric_manager` and `k8s_manager`, reject an
+  unknown manager name, and verify the referenced manager registration exists,
+  is enabled, and declares the required `addressFamily: ipv4` capability;
+- verify that the selected manager combination covers every resource the
+  deployment exposes. A manager may not be selected merely because it can
+  create one resource while lacking the read/delete or allocation capability
+  required by that resource's full lifecycle;
+- require `spec.defaults`, require both default CIDRs, validate their IPv4
+  canonical form and containment, and reject a MetalLB prefix that is absent
+  when CaaS VIP capability is advertised or present when the deployment does
+  not advertise that capability;
+- reject IPv6, dual-stack, unknown capabilities, and arbitrary capability
+  names; capabilities are provider-resolved and not tenant input; and
+- compute and persist the private implementation strategy from the manager
+  combination. A caller-supplied implementation strategy or tenant-selected
+  NetworkClass reference is rejected rather than honored; and
+- publish only a manager-derived status: `addressFamily` must remain `ipv4`,
+  `natGateway` must be false for K8s-only OVN, and the supported-resource set
+  must not claim a resource or operation that the selected managers cannot
+  complete. Status capability changes are provider/controller operations, not
+  tenant updates.
+
+**VirtualNetwork.** The API and controller must:
+
+- establish the tenant/project owner before validating the request and reject
+  a cross-scope parent or duplicate name in the same scope according to the
+  standard resource identity rules;
+- accept only a canonical IPv4 `ipv4_cidr` with host bits zero and reject
+  IPv6, dual-stack, malformed, or ambiguous CIDRs;
+- reject a caller-supplied or mismatched implementation strategy; the value
+  must equal the provider-resolved strategy for the deployment;
+- reject a VirtualNetwork create if its deployment NetworkClass is absent,
+  not Ready, or does not advertise the operations required by the resource;
+- prevent a tenant from using the VN as a parent for a Subnet outside the
+  tenant/project scope; and
+- keep the VN in Pending/Failed rather than Ready until the configured
+  manager has successfully created and reported the network segment.
+
+Cross-tenant CIDR overlap is allowed only because tenant isolation is supplied
+by the configured networking backend. Within one VirtualNetwork, all child
+Subnet CIDRs must be non-overlapping; the backend must not be asked to
+provision an ambiguous address space.
+
+**Subnet.** The API and controller must:
+
+- require a local `virtual_network` reference and verify that the parent
+  exists, is Ready, and belongs to the caller's effective tenant/project;
+- accept only a canonical IPv4 network CIDR, with host bits zero, contained
+  entirely in the parent VirtualNetwork CIDR, and not overlapping any sibling
+  Subnet in that VirtualNetwork;
+- reject a CIDR equal to, containing, or partially overlapping any sibling
+  range; Subnet updates are not supported, so there is no user update path
+  that can relax this check;
+- reject an IPv6/dual-stack address family or a Subnet whose family differs
+  from the parent VN and NetworkClass;
+- validate any provider-reserved range such as a MetalLB VIP prefix only after
+  containment and prefix ordering have been checked; and
+- dispatch `create_subnet` only after the parent VN is Ready and all selected
+  managers support the requested subnet operation. The Subnet becomes Ready
+  only after every required manager reports success.
+
+**SecurityGroup and rules.** The API and controller must:
+
+- require a Ready, same-scope VirtualNetwork;
+- distinguish the system-created tenant fallback SecurityGroup from a
+  tenant-created group. A tenant-created group must contain at least one rule;
+  only the system-created fallback may be empty;
+- validate every rule independently before evaluating the rule set: required
+  action, direction, and protocol; supported enum value; correct port
+  presence/range for the protocol; exactly one direction-appropriate CIDR;
+  canonical IPv4 CIDR; and no unsupported extension fields;
+- normalize CIDRs, enum case, and omitted-vs-explicit fields before duplicate
+  detection. Two normalized identical rules are duplicates even if their input
+  text used different equivalent formatting;
+- reject conflicting equal-specificity rules after normalization. A
+  least-specific deployment baseline permit is not a tenant rule and is not
+  considered a conflicting tenant rule;
+- reject a rule whose source/destination field does not match its direction,
+  including ingress with only `destination_cidr` or egress with only
+  `source_cidr`; and
+- keep the complete rule list immutable after create. The runtime evaluator
+  must apply the provider baseline plus attached tenant groups without
+  allowing an attached tenant group to remove the baseline permit.
+
+**ExternalIPPool.** The provider-scoped pool validation must:
+
+- require `ip_family == IPV4` and reject unspecified, IPv6, and dual-stack
+  values;
+- require exactly one CIDR in the list, validate canonical IPv4 network form,
+  and reject an empty list, multiple CIDRs, host bits, or a CIDR outside the
+  provider's permitted address space;
+- reject overlapping allocation ranges between pools in the same deployment
+  unless the manager explicitly provides disjoint allocation ownership; the
+  provider must not expose two pools that can allocate the same address;
+- ensure the manager can allocate, release, and report addresses for the pool
+  before the pool is marked Ready; and
+- keep the pool address family and range immutable. A pool with allocated
+  ExternalIPs cannot be replaced in place.
+
+**ExternalIP.** The API and controller must:
+
+- require a Ready pool in the permitted deployment/provider scope;
+- atomically reserve capacity before persisting an allocation and reject the
+  request when no capacity is available;
+- never accept a tenant-selected arbitrary address as an alternative to pool
+  allocation. Any manager-reported address must be IPv4, belong to the pool
+  CIDR, not be a network/broadcast/reserved address, and not already be
+  allocated;
+- allow only the manager to transition the allocation from Pending to
+  Allocated or Failed; and
+- prevent deleting or releasing an ExternalIP while an ExternalIPAttachment
+  or NATGateway consumes it.
+
+**ExternalIPAttachment.** The API and controller must:
+
+- require exactly one target oneof arm and reject an empty or multiply set
+  target;
+- require a local ExternalIP reference, verify that it is Allocated for a
+  direct user create, and reject an ExternalIP already consumed by another
+  attachment or NATGateway;
+- verify that the target exists, is in the permitted tenant/project scope,
+  and is Ready enough to expose the endpoint used for DNAT;
+- require `API` or `INGRESS` only for Cluster targets, require
+  `UNSPECIFIED` for ComputeInstance and BaremetalInstance targets, and reject
+  endpoint values that do not match the target type;
+- reject a duplicate attachment for the same ExternalIP/target/endpoint
+  combination;
+- validate the discovered target endpoint as canonical IPv4 before dispatch;
+  the tenant cannot supply or override the discovered endpoint address; and
+- allow the internal auto-provisioning transaction to create a Pending
+  attachment together with its Pending ExternalIP, while requiring the
+  asynchronous controller to wait for both `ExternalIP == Allocated` and the
+  target endpoint before creating DNAT.
+
+**NATGateway.** The API and controller must:
+
+- reject creation unless the resolved NetworkClass advertises NATGateway
+  capability; K8s-only OVN deployments return a capability precondition
+  error and never create a permanently Pending NATGateway;
+- require a Ready same-scope VirtualNetwork and an Allocated, unconsumed
+  same-scope ExternalIP;
+- enforce one NATGateway per VirtualNetwork and one consumer per ExternalIP;
+- reject an ExternalIPAttachment or second NATGateway that would consume the
+  same ExternalIP;
+- dispatch SNAT only after both referenced objects are Ready/Allocated and
+  the VN segment exists; and
+- validate manager-reported SNAT state before marking the NATGateway Ready.
+
+**Workload attachments and status.** Every ComputeInstance, Cluster, and
+BaremetalInstance create path must:
+
+- apply the same omitted/empty/partial defaulting matrix, including Catalog
+  and Template resolution precedence;
+- validate the complete resolved attachment set against the shared Subnet,
+  SecurityGroup, VirtualNetwork, readiness, and IPv4 rules;
+- reject network-owned updates and patches after persistence, including
+  nested references, list order/cardinality, primary designation,
+  `auto_external_ip_attachment`, and BM interface selection;
+- permit controllers to write only status, conditions, and finalizers; and
+- validate every discovered status value before exposing it: canonical IPv4,
+  matching resolved subnet/interface, no duplicate status entry, and a
+  cardinality consistent with the service-specific design.
+
+#### Operation and lifecycle validation
+
+Validation applies to operations as well as field values. The supported
+tenant surface is intentionally narrow:
+
+- **Create:** the caller may provide only network fields documented in the
+  resource-specific contract. The server validates the complete request
+  before persistence, resolves defaults, and stores the complete effective
+  network spec. A caller cannot create an object with an unresolved
+  dependency merely because a manager might become Ready later.
+- **Read and list:** the API applies the existing tenant/project/provider
+  scope before returning network resources, attachments, or references. A
+  caller cannot use a list filter, typed reference, Catalog Item, or status
+  field to discover or mutate another tenant's network objects.
+- **Update, patch, and replace:** requests that change any network-owned
+  field are rejected, including changes hidden inside a field mask or nested
+  message. This includes resource references, CIDRs, rule lists, attachment
+  list length/order, `primary`, interface, target oneof, endpoint enum,
+  `auto_external_ip_attachment`, and provider-resolved implementation data.
+  The server must compare the complete immutable network portion, not only
+  top-level protobuf fields.
+- **Delete:** a delete request is accepted only when reverse references and
+  child resources have been removed or are in the supported deletion flow.
+  Parent deletion is never converted into an implicit cascade that could
+  leave a backend segment, ACL, DNAT, SNAT rule, or allocated IP orphaned.
+  Auto-created ExternalIP children are the explicit exception and are
+  deleted in the documented attachment-then-IP order by the parent finalizer.
+- **Retry and idempotency:** retrying the same create or reconciliation input
+  must not create a second default resource, a second NATGateway for a VN,
+  duplicate SecurityGroup rule, duplicate ExternalIP allocation, or second
+  backend segment. A retry may adopt only an existing object whose immutable
+  identity, owner, parent, and network spec exactly match the request.
+- **Status and finalizers:** controller status, conditions, timestamps, IP
+  discovery, and finalizers are the only mutable controller-owned outputs.
+  Status is never accepted as an alternate input path for network spec, and a
+  finalizer cannot be used to bypass an API immutability or dependency guard.
+- **Direct CR/API bypass:** operator admission/CEL and controller checks must
+  reject the same unsupported values if a CR is submitted without going
+  through fulfillment-service. The hub CR is not a weaker API surface.
+- **Backend failure:** a manager may report Pending, Ready, or Failed only
+  through the defined reconciliation state machine. A caller cannot force
+  Ready by setting status, and a controller cannot report Ready when any
+  required manager or dependency is still Pending/Failed.
+
+#### Validation ownership and test contract
+
+The implementation must have a test for every rejection boundary, not only
+for successful provisioning. At minimum, the shared validation suite covers:
+
+- missing required messages and fields, empty required lists, invalid enum and
+  oneof values, malformed IPv4/CIDR formats, host bits, IPv6, and dual-stack;
+- references that are missing, wrong type, cross-tenant, cross-project,
+  duplicate, Pending, Failed, or otherwise not Ready/Allocated;
+- CIDR containment, sibling overlap, pool overlap, duplicate rules, equal-
+  specificity rule conflicts, and one-resource/one-consumer constraints;
+- unsupported manager/resource combinations, missing managers, missing
+  conditional MetalLB prefix, K8s-only NATGateway, and caller-supplied
+  provider-only fields;
+- update, patch, replace, and delete attempts that violate immutability or
+  dependency guards;
+- direct user creates versus internal default/auto-provisioning creates,
+  proving that only the internal path may persist Pending dependency graphs;
+- transaction rollback when capacity, uniqueness, or a dependent validation
+  fails; and
+- reconciliation requeue behavior when a dependency is Pending, followed by
+  successful dispatch only after the required Ready/Allocated/status
+  preconditions are true.
+
+The service-specific test plans may add cases, but must not remove or weaken
+these shared cases. A service test that exercises an attachment through a
+Catalog Item must assert the same final validation result as a direct create.
+
 ## Proposal
 
 ### NetworkClass

@@ -354,6 +354,11 @@ type ClusterSpec struct {
 
 #### Server Validation (fulfillment-service)
 
+Default Networking applies the shared [Unified Networking validation
+pipeline](/enhancements/OSAC-1433-unified-networking/design.md#validation-and-enforcement-pipeline)
+and adds the onboarding and field-defaulting checks below. It does not define
+an alternative resource or attachment contract.
+
 **NetworkClass defaults validation:**
 - `defaults` is required on the single deployment NetworkClass; there is no enable/disable knob
 - `virtual_network_cidr` must be canonical IPv4 CIDR notation
@@ -375,6 +380,95 @@ type ClusterSpec struct {
 - If multiple pools have equal capacity: selection is deterministic but implementation-defined (e.g., alphabetical by pool name)
 - If no pool has capacity: return error `ExternalIPPool exhaustion: no available capacity in any READY pool for IPv4`
 - Pool capacity is checked and decremented synchronously during the API call. If the pool is exhausted, the call fails and no resources are persisted (including the parent resource). "Synchronous" here means the API call validates and creates DB records atomically — actual IP address allocation from the fabric manager and DNAT rule creation happen asynchronously through the operator reconciliation loop. See [Unified Networking — Auto-provisioning lifecycle](/enhancements/OSAC-1433-unified-networking/design.md#external-access-same-for-all-resource-types) for the full two-phase flow.
+
+**Tenant-onboarding validation:**
+
+- A Tenant cannot become `DefaultNetworkingReady` until the provider has
+  created exactly one default VirtualNetwork, one default IPv4 Subnet, and
+  one tenant fallback SecurityGroup in the tenant scope. A default NATGateway
+  is required only when the resolved NetworkClass advertises NATGateway
+  support.
+- Every default resource carries the default label and the tenant ownership
+  annotation. A resource with the default label but the wrong tenant, wrong
+  VirtualNetwork parent, wrong address family, or non-canonical CIDR is not
+  accepted as a default and cannot satisfy readiness.
+- The default VN CIDR and default Subnet CIDR must pass all shared CIDR
+  validation. The Subnet must be contained by the VN and the default
+  SecurityGroup must reference that VN. The default NATGateway, when
+  supported, must reference that VN and a Ready/Allocated unconsumed
+  ExternalIP.
+- The tenant fallback SecurityGroup is the one exception to the tenant
+  SecurityGroup rule-count requirement: it may have an empty rule list because
+  the provider-owned deployment baseline permit is always evaluated. A
+  tenant-created non-default SecurityGroup still requires at least one valid
+  rule.
+- In K8s-only mode, onboarding must not attempt to create a NATGateway. The
+  absence of NAT capability is a successful expected configuration, not a
+  failed default resource and not an indefinitely Pending condition.
+- Duplicate onboarding requests are idempotent only when the existing
+  resources match the expected tenant, label, parent, CIDR, address family,
+  and manager-derived capability. A mismatched existing default is a terminal
+  configuration error requiring provider repair; it must not be silently
+  adopted.
+
+**Default readiness validation:**
+
+- `DefaultNetworkingReady == true` only when every default resource required by
+  the NetworkClass capability set is Ready: VN, Subnet, fallback SG, and NAT
+  Gateway when supported. Unsupported resources are excluded from the
+  readiness set.
+- A Pending or Failed default keeps the Tenant non-Ready and prevents a
+  workload create that relies on that default from succeeding. The workload
+  API returns a clear readiness/precondition error rather than persisting an
+  unresolved attachment.
+- Feedback must verify the expected resource identity and parent before
+  setting a default Ready. A Ready resource from another tenant or another VN
+  cannot satisfy this tenant's condition.
+- If default provisioning later loses readiness, existing workloads and
+  immutable resolved attachments are not rewritten. New omitted/empty
+  attachment requests are blocked or remain Pending according to the shared
+  API contract until the defaults recover.
+
+**Field-level defaulting validation:**
+
+- ComputeInstance omitted/empty input resolves to one default Subnet and one
+  default SecurityGroup, subject to VMaaS's zero-or-one list contract.
+- Cluster omitted/empty input resolves to one singular Cluster attachment
+  containing both defaults.
+- BaremetalInstance omitted/empty input resolves to one attachment containing
+  both defaults and the first eligible fabric interface.
+- A supplied single BM or VM attachment, or supplied singular Cluster
+  attachment, receives defaults only for missing fields. Non-empty supplied
+  SecurityGroup lists and supplied Subnet references are never replaced.
+- Defaulting occurs only after Catalog/Template precedence is resolved and
+  before final shared readiness and service-specific validation. A Catalog or
+  Template value that is invalid is rejected; defaulting must not repair an
+  invalid explicit value.
+- All resolved references are rechecked for Ready state in the same create
+  transaction. The only Pending default graph permitted is the internal
+  tenant-onboarding/auto-provisioning graph; a direct tenant request cannot
+  create a workload that points to a Pending default.
+
+**Default Networking validation tests:**
+
+- reject missing NetworkClass defaults, malformed/IPv6/dual-stack default
+  CIDRs, Subnet CIDR outside the VN, wrong default labels/tenant annotations,
+  duplicate defaults, and a default SecurityGroup attached to another VN;
+- accept an empty tenant fallback SecurityGroup only when it is the
+  system-created default and the provider baseline is present; reject an
+  empty tenant-created SecurityGroup;
+- accept K8s-only onboarding without NATGateway and reject any later tenant
+  NATGateway create in that deployment;
+- keep `DefaultNetworkingReady` false while any supported default is Pending
+  or Failed, and verify readiness becomes true only after all expected
+  resources are Ready;
+- verify omitted, empty, partial, and complete workload attachment inputs for
+  all three services, including preservation of explicit values and rejection
+  of VM/BM cardinality violations;
+- verify a Catalog/Template default is resolved before tenant defaults and an
+  invalid explicit Catalog/Template value is not replaced; and
+- verify failed default creation and auto ExternalIP reservation roll back
+  without leaving a partially labeled default or parent workload.
 
 ### Implementation Details/Notes/Constraints
 

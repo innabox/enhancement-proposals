@@ -248,12 +248,160 @@ The feedback controller populates `ComputeNetworkAttachmentStatuses` by watching
 
 #### Server Validation (fulfillment-service)
 
-- During migration: accept both old field (14) and new field (18). If both set, reject. If old set, convert internally.
-- Attachment resolution: omitted or empty list defaults both fields; a supplied list may contain at most one entry; a partial entry defaults only its missing subnet or SecurityGroup list; supplied fields are preserved.
-- Reference validation: resolved Subnets and SecurityGroups must exist, be Ready, and belong to one VirtualNetwork.
-- Primary validation: the single attachment must omit or set `primary: true`; explicit `false` is rejected.
-- Cardinality validation: a request with more than one entry is rejected with a single-interface validation error.
-- BM-only deployment check: if the NetworkClass has no k8sManager, reject ComputeInstance creation
+VMaaS performs validation in the shared order defined by the [Unified
+Networking validation pipeline](/enhancements/OSAC-1433-unified-networking/design.md#validation-and-enforcement-pipeline).
+The following checks are VMaaS-specific and are required on every direct,
+Template-based, and Catalog-based ComputeInstance create path.
+
+**Request shape and migration validation:**
+
+- Field 14 (`network_attachments`) and field 18
+  (`compute_network_attachments`) are alternative input surfaces during the
+  migration. If both are present, even if one is empty, reject the request
+  with `InvalidArgument`; do not merge them or choose one by precedence.
+- If field 14 is present alone, it must contain zero or one shared
+  `NetworkAttachment` entry. Convert the single entry to
+  `ComputeNetworkAttachment` before applying the canonical validation rules.
+  The deprecated message has no `primary` field, so the converted entry is
+  implicitly primary.
+- If field 18 is present, it must contain zero or one entry. A second entry is
+  rejected before reference lookup, defaulting, capacity reservation, or CR
+  creation with a single-interface cardinality error.
+- The optional `primary` presence bit is significant. Omitted and `true` are
+  accepted for the sole entry; explicit `false` is rejected. A defaulted or
+  converted entry is persisted with the canonical primary meaning, but the
+  tenant's explicit `false` must never be rewritten to `true`.
+- Unknown attachment fields, a malformed subnet reference, a malformed
+  SecurityGroup reference, or a malformed Boolean presence encoding is
+  rejected by the API shape layer.
+
+**Attachment resolution and references:**
+
+- Missing or empty canonical/deprecated attachment input resolves to exactly
+  one attachment containing the tenant's default Subnet and default
+  SecurityGroup. If either default is absent or not Ready, return the shared
+  no-default or readiness error; do not create a VM with an unresolved
+  attachment.
+- A supplied single attachment defaults only its missing fields. An omitted
+  subnet receives only the default Subnet. A missing or empty
+  `security_groups` list receives only the default SecurityGroup. A supplied
+  subnet and non-empty SecurityGroup list are preserved exactly.
+- After resolution, the Subnet must exist, be `Ready`, be IPv4, and belong to
+  the effective tenant/project. Every SecurityGroup must exist, be `Ready`,
+  belong to the same tenant/project and the same VirtualNetwork as the
+  Subnet, and be unique in the list.
+- The resolved attachment must reference one VirtualNetwork. A Catalog or
+  Template value that resolves to a Subnet and SecurityGroup in different
+  VirtualNetworks is rejected; the defaulting layer must not silently replace
+  either supplied value to repair the mismatch.
+- The resolved Subnet must have the hosting namespace/CUDN placement required
+  by the selected K8s manager. Missing placement status, a failed CUDN, or an
+  unsupported manager capability is a provisioning precondition failure, not
+  a reason to create a second attachment or fall back to another Subnet.
+
+**Deployment and capability validation:**
+
+- ComputeInstance creation requires a `k8s_manager` in the resolved
+  NetworkClass. A Fabric-only/BM-only deployment is rejected before the
+  ComputeInstance is persisted because VM placement cannot be performed.
+- The selected K8s manager must advertise Compute/VM placement support for
+  the requested Subnet and the selected address family. An EVPN or other
+  prerequisite-gated manager is accepted only when its own design's placement
+  checks pass.
+- VMaaS must not require a Fabric Manager when the K8s-only manager advertises
+  the complete supported VM networking surface. It must, however, reject any
+  VM request that would require an unsupported NATGateway or unsupported
+  manager operation.
+
+**CRD and controller validation:**
+
+- The ComputeInstance CRD repeats the maximum-cardinality and optional
+  `primary` checks with CEL. It also makes the entire resolved attachment
+  list, every Subnet/SecurityGroup reference, and `primary` immutable after
+  creation.
+- `PrimarySubnetRef()` returns the sole resolved attachment's Subnet and
+  returns no value only before default resolution has populated the CR. It
+  must never select an arbitrary first entry from an invalid multi-entry list.
+- The AAP template receives one resolved attachment and creates exactly one
+  KubeVirt network interface. It must fail closed if the CR contains more
+  than one entry rather than provisioning only the first entry.
+- The feedback controller accepts zero or one VMI network status entry, maps
+  the sole interface by the CUDN NAD reference, and writes only a canonical
+  IPv4 address that belongs to the resolved Subnet. Duplicate, mismatched,
+  non-IPv4, or more-than-one status entries are not published as Ready.
+
+**Automatic ExternalIP validation:**
+
+- When `auto_external_ip_attachment` is true, the same request first passes
+  normal VM attachment validation. Automatic external access cannot bypass
+  the required default Subnet or SecurityGroup checks.
+- The selected pool must be Ready, IPv4, and have capacity. Pool selection is
+  deterministic among equal-capacity pools. Capacity reservation, the parent
+  ComputeInstance, ExternalIP, and Pending ExternalIPAttachment are persisted
+  atomically; any validation or capacity failure rolls back all of them.
+- The auto-created ExternalIPAttachment target is the ComputeInstance and its
+  endpoint is `UNSPECIFIED`. The service never accepts a tenant-supplied
+  target endpoint IP for this path.
+- The ExternalIPAttachment controller dispatches only after the ExternalIP
+  is `Allocated` and the VM status contains the sole attachment's canonical
+  IPv4 address. Until then it requeues and leaves the attachment Pending.
+- The auto-created ExternalIPAttachment DNAT target is the sole attachment's
+  IP. A VM with no discovered attachment IP cannot transition the attachment
+  to Ready.
+
+**Update, delete, and status validation:**
+
+- Update, patch, replace, and field-mask requests that change either
+  attachment field, any nested Subnet/SecurityGroup/primary value, or
+  `auto_external_ip_attachment` are rejected. The supported change is delete
+  and recreate.
+- A delete is blocked by the shared dependency guards while the VM or its
+  auto-created ExternalIPAttachment still protects a Subnet, ExternalIP, or
+  ExternalIPPool. Auto-created children are deleted in attachment-then-IP
+  order before parent finalizer removal.
+- Status writes may update only controller-owned conditions, provisioning
+  state, discovered IP, and finalizers. A status callback cannot mutate the
+  resolved network spec or make an unready Subnet/SecurityGroup usable.
+
+Any validation failure above is surfaced with a field path where possible,
+for example `spec.compute_network_attachments[1]`,
+`spec.compute_network_attachments[0].subnet`, or
+`spec.compute_network_attachments[0].primary`. The request is not persisted
+when the failure is found during create.
+
+#### VMaaS validation tests
+
+The VMaaS unit and integration suites must cover both accepted and rejected
+paths:
+
+- accept omitted and empty attachment input when both tenant defaults are
+  Ready; reject the same request when either default is absent, Pending, or
+  Failed;
+- accept one canonical entry with omitted or `primary: true`; reject explicit
+  `primary: false`, a second canonical entry, and a second deprecated entry;
+- accept one deprecated field-14 entry and verify conversion; reject both
+  field 14 and field 18 even when one is empty;
+- preserve a supplied Subnet and non-empty SecurityGroup list while filling
+  only missing fields; reject a cross-VirtualNetwork combination, duplicate
+  SecurityGroup, wrong-scope reference, missing reference, or non-Ready
+  reference;
+- reject VM creation without a K8s manager and accept K8s-only creation when
+  the manager advertises VM support;
+- reject a Catalog/Template list with more than one entry or explicit
+  `primary: false`, and verify that direct and Catalog creates return the same
+  validation result;
+- reject a CR that bypasses the API and contains multiple attachments or an
+  explicit false primary value;
+- verify the template creates exactly one interface and fails closed on an
+  invalid CR rather than silently dropping entries;
+- verify status ignores/rejects a mismatched, non-IPv4, duplicate, or second
+  interface result;
+- verify automatic ExternalIP creation rolls back on pool exhaustion or any
+  validation failure, and verify its controller requeues until both the
+  ExternalIP and VM IP prerequisites are Ready; and
+- verify update/patch attempts for every nested network field and the
+  auto-external switch are rejected, while controller status/finalizer writes
+  remain allowed.
 
 #### Catalog Item interaction
 

@@ -443,14 +443,142 @@ The `mutateBMI()` function in the fulfillment-service's BM reconciler currently 
 
 #### Server Validation Rules
 
-- All referenced subnets must belong to the same VirtualNetwork
-- All resolved Subnets and SecurityGroups must exist and be Ready before the BaremetalInstance create is accepted
-- The `interface` must reference a valid port name from the BareMetalInstanceType (its network ports list defines available ports)
-- Interfaces with role `lifecycle` are rejected in `network_attachments` — lifecycle interfaces (PXE boot, BMC) are reserved for the provisioning system and are not tenant-attachable
-- At most one network attachment may be specified; omitted or empty input is resolved to one default attachment
-- The single attachment is implicitly primary; omission or `true` is accepted and explicit `false` is rejected
-- If the attachment's `interface` is omitted, it defaults to the first port with `role=fabric` from the BareMetalInstanceType
-- The attachment list and every field, including Subnet, SecurityGroup membership, interface, and primary designation, are immutable after creation; changing network configuration requires deleting and recreating the BaremetalInstance
+BMaaS applies the shared [Unified Networking validation
+pipeline](/enhancements/OSAC-1433-unified-networking/design.md#validation-and-enforcement-pipeline)
+first and then applies the physical-interface rules below. These rules are required for standalone
+BaremetalInstance creates, Catalog-based creates, and the private create path
+used by CaaS worker provisioning.
+
+**Request shape and cardinality:**
+
+- `network_attachments` remains a repeated field for compatibility, but it
+  accepts zero or one entry at API input. A second entry is rejected before
+  reference lookup, interface discovery, or persistence with a single-NIC
+  cardinality error.
+- Missing or empty input means “use the default attachment”; it does not mean
+  “provision a server with no tenant interface.” After default resolution the
+  persisted BM resource contains exactly one attachment.
+- A supplied attachment must contain no unknown fields. Its optional
+  `primary` value may be omitted or `true`; explicit `false` is rejected.
+  The sole attachment is always the tenant-facing primary/default-route
+  attachment.
+- The repeated status field is also limited to zero or one entry while the
+  server is provisioning. A Ready BM must eventually report the single
+  selected interface and its canonical IPv4 address.
+
+**Attachment and dependency resolution:**
+
+- A missing or empty list resolves the tenant default Subnet, default
+  SecurityGroup, and first eligible `fabric` interface from the effective
+  BareMetalInstanceType.
+- A supplied attachment defaults only missing fields. A supplied Subnet,
+  non-empty SecurityGroup list, or interface is preserved and validated; no
+  default may overwrite it.
+- The resolved Subnet and every SecurityGroup must exist, be Ready, be in the
+  caller's effective tenant/project, and belong to the same VirtualNetwork.
+  Duplicate SecurityGroup references are rejected.
+- The effective BareMetalInstanceType must exist, be Ready/usable for
+  allocation, and expose at least one valid network port with role `fabric`.
+  A missing, Pending, or Failed instance type is a create precondition
+  failure, not a reason to accept an unresolved interface.
+
+**Physical-interface validation:**
+
+- If `interface` is supplied, it must exactly identify one named port in the
+  effective BareMetalInstanceType. Matching is by the canonical port name,
+  not by list position, display label, MAC address supplied by the tenant, or
+  an arbitrary interface string.
+- The selected port must be tenant-attachable. Ports with role `lifecycle`
+  are reserved for PXE, BMC, and provisioning operations and are rejected.
+  An unknown role is rejected by the BareMetalInstanceType contract rather
+  than treated as `fabric`.
+- If `interface` is omitted, select the first ordered port with role
+  `fabric`. If no such port exists, reject the create; never select a
+  management, storage, lifecycle, or arbitrary first port as a fallback.
+- The selected port must be compatible with the inventory host that will be
+  allocated. If inventory cannot provide the named port, the resource stays
+  Pending/Failed according to the BM provisioning lifecycle and must not be
+  marked Ready with a different port.
+- The resolved interface is copied into the operator CR and is immutable. A
+  later BareMetalInstanceType edit or port reordering cannot silently move an
+  existing server to another interface.
+
+**Provisioning and status validation:**
+
+- Before dispatching `move_network_attachment`, validate that the selected
+  port has a known fabric MAC and that the provisioning-network handoff is
+  possible. The system must not move a lifecycle or unknown port.
+- The operator may move only the selected fabric port from the provisioning
+  network to the resolved tenant Subnet. It must not move every port on the
+  host and must not infer a second tenant attachment from inventory.
+- After DHCP, the discovered address must be canonical IPv4, belong to the
+  resolved Subnet, and match the selected port MAC or the documented named
+  fabric-server fallback. A lease for another port is rejected and retried.
+- The operator writes at most one `BareMetalNetworkAttachmentStatus` entry,
+  with the resolved interface, Subnet reference, IPv4 address, and implicit
+  primary value. Status cannot change the spec attachment.
+- ExternalIPAttachment dispatch waits for both the BM resource's discovered
+  IP and the ExternalIP's `Allocated` state. Until both are true, the
+  attachment remains Pending and the controller requeues.
+
+**Automatic ExternalIP validation:**
+
+- Auto ExternalIP allocation is available only after the normal one-entry,
+  interface, Subnet, SecurityGroup, and instance-type validations pass.
+- The selected pool must be Ready, IPv4, and have capacity. Parent BM,
+  ExternalIP, and Pending ExternalIPAttachment records are created in one
+  transaction; capacity or validation failure leaves no parent or child
+  records.
+- The auto-created attachment targets the BaremetalInstance and uses
+  `target_endpoint == UNSPECIFIED`. Its DNAT target is the discovered IP of
+  the selected physical interface, never an IP supplied by the tenant.
+
+**Update, delete, and private CaaS handoff:**
+
+- Update, patch, replace, or field-mask changes to the attachment list,
+  Subnet, SecurityGroups, interface, primary value, or
+  `auto_external_ip_attachment` are rejected after create. Changing the
+  network requires delete and recreate.
+- The CaaS private create path must send exactly one enriched attachment:
+  the Subnet and SecurityGroups from the Cluster attachment plus the
+  immutable node-set `fabric_interface`. BMaaS re-validates that attachment
+  against the selected BareMetalInstanceType; private callers do not bypass
+  the physical-port and lifecycle-port checks.
+- The BM delete path returns the selected port to the provisioning network
+  only after dependent ExternalIPAttachment cleanup is handled. Deletion is
+  blocked by shared dependency guards when another resource still references
+  the Subnet, ExternalIP, or ExternalIPPool.
+
+Every rejected request identifies the most specific field path available, for
+example `spec.network_attachments[1]`,
+`spec.network_attachments[0].interface`, or
+`spec.network_attachments[0].primary`. No invalid input is persisted.
+
+#### BMaaS validation tests
+
+Required negative and positive coverage includes:
+
+- omitted/empty input resolves exactly one attachment; a second explicit
+  entry, explicit `primary: false`, and empty defaults are rejected;
+- missing, Pending, Failed, wrong-scope, wrong-VirtualNetwork, or duplicate
+  Subnet/SecurityGroup references are rejected;
+- a Ready BareMetalInstanceType with one or more fabric ports succeeds;
+  missing type, no fabric port, unknown interface, lifecycle interface, and
+  inventory host without the named interface are rejected or held Pending as
+  specified;
+- omitted interface selects the first ordered fabric port, while a supplied
+  interface is preserved and never replaced by the default;
+- port move rejects an unknown/lifecycle port and touches only the selected
+  port;
+- DHCP status rejects a non-IPv4, wrong-subnet, wrong-MAC, duplicate, or
+  second status result;
+- the CaaS private worker path is revalidated as a normal one-entry BM
+  request and cannot inject a second attachment;
+- auto ExternalIP capacity/validation failure rolls back the parent and
+  children, and successful auto-provisioning waits for BM IP discovery before
+  DNAT; and
+- update/patch and dependency-delete guard cases cover every network-owned
+  nested field.
 
 #### Catalog Item interaction
 

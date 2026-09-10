@@ -3,7 +3,7 @@ title: catalog-items-v2-field-governance
 authors:
   - Ilya Skornyakov
 creation-date: 2026-08-20
-last-updated: 2026-08-25
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-3538
 prd:
@@ -889,6 +889,61 @@ References embedded inside Template-parameter `Any` values are not database refe
 Catalog resolution runs in each resource-specific private Create handler, alongside the existing direct-Template preparation logic [Codebase: internal/servers/private_compute_instances_server.go].
 
 Policy resolution treats scalars, structured values, lists, and typed references uniformly: it selects the winning value and copies it into the materialized resource. Normal resource validation remains authoritative for field validity, cross-field invariants, and resource-specific rules.
+
+#### Network policy validation delegation
+
+Catalog Items can supply network-owned values, but they do not create a second
+network contract. The [Unified Networking validation
+pipeline](/enhancements/OSAC-1433-unified-networking/design.md#validation-and-enforcement-pipeline)
+and the applicable VMaaS, CaaS, or BMaaS design remain authoritative. The
+Catalog Item authoring and materialization paths must
+apply the following rules:
+
+- A Catalog Item policy value must be structurally valid for the governed
+  resource field. A malformed wrapper, missing required policy `oneof`, wrong
+  typed reference, malformed IPv4/CIDR, unknown enum, or unsupported list
+  element is rejected at Catalog Item Create/Update.
+- A Compute `compute_network_attachments` policy remains list-shaped but its
+  `items` list accepts zero or one entry only. More than one item and an item
+  with explicit `primary: false` are rejected. Omitted `primary` and
+  `primary: true` are the only accepted single-entry forms.
+- A Bare Metal `network_attachments` policy accepts zero or one entry and
+  applies the same implicit-primary rule, while its interface reference must
+  be validated against the effective BareMetalInstanceType when the resource
+  is materialized. Catalog authoring must not invent a physical interface
+  catalog separate from BareMetalInstanceType.
+- A Cluster `network_attachment` policy is one structured attachment. It may
+  govern only the tenant-facing Subnet and SecurityGroup fields; node-set
+  fabric-interface derivation and VIP endpoint values remain system-owned.
+- Empty repeated network policy values have the existing Catalog semantics of
+  “unset” and fall through to the next defaulting source. An empty locked or
+  editable default is rejected where the target resource treats empty as
+  unset. This does not make an explicitly invalid non-empty value acceptable.
+- Locked and editable policy values are checked for reference scope. A shared
+  Catalog Item cannot lock or default tenant-local Subnet/SecurityGroup
+  references. A tenant-owned item may reference resources in its own scope,
+  but those references must exist and be Ready before the resulting workload
+  is accepted.
+- After Catalog and Template precedence is resolved, the final materialized
+  resource must pass the complete Unified Networking contract and the
+  corresponding VMaaS, CaaS, or BMaaS validation. Catalog resolution must not
+  bypass readiness, cardinality, same-VN, interface, manager-capability, or
+  ExternalIP prerequisite checks.
+- If final validation fails, the Catalog-based resource create is atomic: no
+  parent resource or auto-created networking child is persisted. Updating the
+  Catalog Item itself also remains atomic and must not leave a partially
+  updated policy.
+- Catalog metadata, descriptions, publication state, and non-network resource
+  fields remain governed by Catalog Items v2 and are not changed by these
+  network validations.
+
+The Catalog test contract must include direct policy-authoring failures for
+multi-entry Compute/Bare Metal lists, explicit false primary, malformed and
+wrong-scope references, empty locked values, and invalid CIDRs. Resource-create
+tests must then prove that the same policy succeeds or fails identically to an
+equivalent direct resource request, including Pending/Failed references,
+cross-VirtualNetwork attachments, CaaS endpoint rules, and auto ExternalIP
+capacity failures.
 
 Resource Update performs no Catalog resolution. `spec.catalog_item` and `spec.template` are immutable, and normal Update behavior applies to the remaining fields.
 
