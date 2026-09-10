@@ -566,6 +566,11 @@ FabricDomain inherits the existing OSAC multi-tenant security model:
 - **No new authentication/authorization surface:** FabricDomain uses the same
   gRPC interceptor chain and OPA policy engine as existing networking resources.
 
+SecurityGroup behavior on the associated VirtualNetwork follows the unified
+networking contract. The default SecurityGroup is hard-coded to permit all
+traffic. When SecurityGroup rules overlap or contradict, the most specific
+matching rule wins.
+
 ### Failure Handling and Recovery
 
 | Failure mode | What happens | Recovery | User observes |

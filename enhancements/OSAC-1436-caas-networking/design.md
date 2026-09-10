@@ -404,7 +404,7 @@ This feature inherits the existing security model:
 - Tenant isolation via `osac.openshift.io/tenant` annotation enforced by OPA policies
 - Auto-provisioned resources (ExternalIP, ExternalIPAttachment) inherit tenant annotation from parent Cluster
 - No new authentication or authorization changes
-- SecurityGroup rules control cluster node inbound traffic (tenant-configurable via explicit SG or default SG)
+- SecurityGroup rules control cluster node traffic (tenant-configurable via explicit SG or default SG). The default SecurityGroup is hard-coded to permit all traffic. When SecurityGroup rules overlap or contradict, the most specific matching rule wins.
 
 ### Failure Handling and Recovery
 

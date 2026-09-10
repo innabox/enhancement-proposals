@@ -420,6 +420,14 @@ osac create security-group --virtual-network my-net --name my-sg \
 
 The fabric manager creates ACL rules on the fabric.
 
+#### SecurityGroup Rule Semantics
+
+SecurityGroup behavior is uniform across VMaaS, CaaS, and BMaaS and is
+enforced by the selected network backend. The default SecurityGroup is
+hard-coded to permit all traffic. When SecurityGroup rules overlap or
+contradict, the most specific matching rule wins. These semantics apply to
+both ingress and egress.
+
 #### Resource Creation (Differs by Type)
 
 The networking setup above is shared. Only the resource creation step

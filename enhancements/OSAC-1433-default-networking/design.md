@@ -53,6 +53,13 @@ A reachable resource in OSAC requires networking resources: VirtualNetwork, Subn
 - UI support for simplified creation (deferred — API and CLI only)
 - Automatic migration of existing resources to use defaults
 
+### SecurityGroup Defaults and Rule Evaluation
+
+The default SecurityGroup created during tenant onboarding is hard-coded to
+permit all traffic. When SecurityGroup rules overlap or contradict, the most
+specific matching rule wins. These semantics apply to both ingress and egress
+and are shared by every resource type that uses the default attachment.
+
 ## Proposal
 
 The design covers three capabilities: default networking (including NATGateway) at tenant onboarding, optional network_attachments with auto-population, and auto ExternalIP provisioning.
@@ -69,11 +76,7 @@ The design covers three capabilities: default networking (including NATGateway) 
        "defaults": {
          "virtualNetworkCIDR": "10.0.0.0/16",
          "ipv4SubnetCIDR": "10.0.1.0/24",
-         "ipv6SubnetCIDR": "fd00:osac:1::/64",
-         "securityGroupRules": [
-           {"direction": "ingress", "protocol": "tcp", "port": 22, "source": "0.0.0.0/0"},
-           {"direction": "ingress", "protocol": "tcp", "port": 443, "source": "0.0.0.0/0"}
-         ]
+         "ipv6SubnetCIDR": "fd00:osac:1::/64"
        }
      }
    }'
@@ -87,7 +90,7 @@ The design covers three capabilities: default networking (including NATGateway) 
      - Creates default VirtualNetwork with label `osac.openshift.io/default: "true"`, using CIDR from NetworkClass defaults
      - Creates default IPv4 Subnet with label `osac.openshift.io/default: "true"`, using `ipv4SubnetCIDR` from NetworkClass defaults
      - Creates default IPv6 Subnet with label `osac.openshift.io/default: "true"`, using `ipv6SubnetCIDR` from NetworkClass defaults
-     - Creates default SecurityGroup with label `osac.openshift.io/default: "true"`, using rules from NetworkClass defaults
+     - Creates default SecurityGroup with label `osac.openshift.io/default: "true"`, using the hard-coded permit-all default policy
      - Creates default NATGateway with an auto-allocated ExternalIP on the default VirtualNetwork, labeled `osac.openshift.io/default: "true"`
    - Reads NetworkClass defaults configuration (single NetworkClass per deployment)
    - Default resources go through the normal reconciliation path: fulfillment-service reconciler pushes CRs → osac-operator networking controllers dispatch to fabric/k8s managers → resources transition to READY
@@ -217,15 +220,7 @@ message NetworkClassSpec {
 message NetworkDefaults {
   string virtual_network_cidr = 1;  // e.g., "10.0.0.0/16"
   string ipv4_subnet_cidr = 2;      // e.g., "10.0.1.0/24"
-  repeated SecurityGroupRule security_group_rules = 3;
-  string ipv6_subnet_cidr = 4;      // e.g., "fd00:osac:1::/64"
-}
-
-message SecurityGroupRule {
-  string direction = 1;   // "ingress" or "egress"
-  string protocol = 2;    // "tcp", "udp", "icmp", etc.
-  int32 port = 3;         // port number (0 for ICMP)
-  string source = 4;      // CIDR (for ingress) or destination (for egress)
+  string ipv6_subnet_cidr = 3;      // e.g., "fd00:osac:1::/64"
 }
 ```
 
@@ -300,14 +295,6 @@ type NetworkDefaults struct {
     VirtualNetworkCIDR string              `json:"virtualNetworkCIDR,omitempty"`
     IPv4SubnetCIDR     string              `json:"ipv4SubnetCIDR,omitempty"`
     IPv6SubnetCIDR     string              `json:"ipv6SubnetCIDR,omitempty"`
-    SecurityGroupRules []SecurityGroupRule  `json:"securityGroupRules,omitempty"`
-}
-
-type SecurityGroupRule struct {
-    Direction string `json:"direction"` // ingress or egress
-    Protocol  string `json:"protocol"`  // tcp, udp, icmp, etc.
-    Port      int32  `json:"port"`      // port number
-    Source    string `json:"source"`    // CIDR
 }
 ```
 
@@ -336,8 +323,7 @@ type ClusterSpec struct {
 - `virtual_network_cidr` must be valid CIDR notation
 - `ipv4_subnet_cidr` must be valid IPv4 CIDR notation and within virtual_network_cidr range
 - `ipv6_subnet_cidr` must be valid IPv6 CIDR notation
-- `security_group_rules[].direction` must be "ingress" or "egress"
-- `security_group_rules[].protocol` must be valid (tcp, udp, icmp, etc.)
+- The default SecurityGroup is created with the hard-coded permit-all policy
 
 **Resource creation with optional network_attachments:**
 - If network_attachments omitted: query tenant's default Subnet and SecurityGroup (labeled `osac.openshift.io/default: "true"`)
@@ -416,11 +402,11 @@ This feature inherits the existing security model:
 - Auto-provisioned resources (ExternalIP, ExternalIPAttachment) inherit tenant annotation from parent resource
 - Default resources (VN, Subnet, SG, NATGateway) inherit tenant annotation from Tenant resource
 - No new authentication or authorization changes
-- Default SecurityGroup rules configured by Cloud Infrastructure Admin (applies to all tenants)
-- Tenant Admin can modify default SecurityGroup rules after creation (tenant-configurable)
+- Default SecurityGroup is hard-coded to permit all traffic for all tenants
+- Tenant Admin can modify the default SecurityGroup after creation
 
 **Risk: Default SecurityGroup too permissive**
-- Mitigation: Cloud Infrastructure Admin configures default rules on NetworkClass with minimal access (e.g., SSH and HTTPS only). Tenant Admin tightens rules after creation if needed.
+- Mitigation: The default SecurityGroup is intentionally permissive. When rules overlap or contradict, the most specific matching rule wins, and Tenant Admin can modify the default SecurityGroup after creation.
 
 ### Failure Handling and Recovery
 
@@ -480,9 +466,9 @@ No new metrics or alerts (existing provisioning duration and failure rate metric
 
 #### Risk: Default SecurityGroup too permissive
 
-**Impact:** All tenants receive the same default SecurityGroup rules configured by Cloud Infrastructure Admin. If misconfigured, all tenants' resources may be exposed.
+**Impact:** All tenants receive the same hard-coded permit-all default SecurityGroup. If it is not subsequently tightened, all tenants' resources may be exposed.
 
-**Mitigation:** Cloud Infrastructure Admin configures default rules on NetworkClass with minimal access (e.g., SSH and HTTPS only). Tenant Admin can tighten rules after creation.
+**Mitigation:** The default SecurityGroup starts with the hard-coded permit-all policy. When rules overlap or contradict, the most specific matching rule wins, and Tenant Admin can modify the default SecurityGroup after creation.
 
 **Reviewed by:** Cloud Infrastructure Admin
 
@@ -537,7 +523,7 @@ Resolved: Return error, no resource persisted.
 
 ### Unit Tests
 
-- fulfillment-service: NetworkClass defaults validation (valid CIDR, valid SecurityGroupRule fields)
+- fulfillment-service: NetworkClass defaults validation (valid CIDR fields and hard-coded default SecurityGroup policy)
 - fulfillment-service: network_attachments population (populate with defaults when omitted, skip when provided)
 - fulfillment-service: auto ExternalIP pool selection (pick READY pool with most capacity, respect IP family)
 - fulfillment-service: capacity exhaustion error (return error, resource not persisted)
