@@ -6,10 +6,7 @@
 | Jira        | https://redhat.atlassian.net/browse/OSAC-1436 |
 | Date        | 2026-07-08 |
 
-> This PRD is an expansion of the [Unified Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md), scoped to the specific service type. The unified PRD defines the shared architectural requirements; this document defines the service-specific requirements and user stories.
-
-CaaS networking uses IPv4 CIDRs and IPv4 endpoint addresses only. IPv6 and
-dual-stack networking are not supported.
+> This PRD is an expansion of the [Unified Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md), scoped to the specific service type. The unified PRD defines the shared networking resources and operation contract; the [Unified Networking design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology) defines the supported IPv4-only, connected single-hub boundary. This document defines the CaaS-specific requirements and user stories.
 
 ## 1. Problem Statement
 
@@ -122,7 +119,7 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 - [ ] Auto-created external IPs and external IP attachments are labeled as auto-provisioned and visible in list views
 - [ ] Deleting a cluster with auto-provisioned resources causes the auto-created external IPs and external IP attachments to be cleaned up
 - [ ] The system determines which physical network interface to use based on the host type's interface configuration
-- [ ] Updating or patching the Cluster network attachment or any of its fields is rejected; the network operation contract exposes create, read, and delete only for network-owned data
+- [ ] Updating or patching the Cluster network attachment or any of its fields is rejected under the [unified networking operation contract](/enhancements/OSAC-1433-unified-networking/prd.md#network-operation-contract)
 
 ## 6. Assumptions
 

@@ -29,8 +29,10 @@ where a single create command produces a reachable instance.
   create/read/delete lifecycle as manually created ones; their network-owned
   fields are immutable after creation
 
-All default networking resources use IPv4 CIDRs. IPv6 and dual-stack networking
-are not supported.
+The shared networking resources, IPv4-only scope, connected single-hub
+deployment boundary, and operation contract are defined by the [Unified
+Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md#network-operation-contract)
+and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology).
 
 ### 2.2 Non-Goals
 

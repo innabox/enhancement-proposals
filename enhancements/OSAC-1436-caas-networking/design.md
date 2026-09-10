@@ -28,25 +28,13 @@ This document is a per-service expansion of the [Unified Networking EP](/enhance
 Shared field types, formats, presence rules, allowed values, and validation
 are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
 
-All CaaS networking resources, endpoint addresses, and VIP allocation use
-IPv4 only. IPv6 and dual-stack networking are not supported.
+The shared networking resource model, IPv4-only scope, and connected
+single-hub deployment boundary are defined by the [Unified Networking
+design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology).
+The shared operation contract is defined by [Supported Operations and
+Immutability](/enhancements/OSAC-1433-unified-networking/design.md#supported-operations-and-immutability).
 
 Cluster provisioning uses the OSAC Networking API for all networking lifecycle — tenants place clusters on their VirtualNetworks via `network_attachment`, the `BareMetalWorkerReconciler` creates on-demand `BareMetalInstance` objects via the BMaaS private gRPC API (BMaaS owns the fabric port move and IP assignment as part of BMI provisioning), and a VIP feedback loop enables auto-provisioned external access for cluster API and ingress endpoints. See [PRD](prd.md) for detailed requirements and [OSAC-2135](/enhancements/OSAC-2135-caas-bare-metal-worker-provisioning/design.md) for the full provisioning design.
-
-## Deployment Topology
-
-This design supports exactly one hub cluster per OSAC deployment. Multi-hub
-deployments are not supported. Cluster networking resources and their
-associated provisioning CRs follow the unified networking reconciliation path
-through that hub. Hosting clusters are workload targets and are not additional
-hubs.
-
-> **Current implementation boundary:** The current OSAC implementation supports
-> connected deployments only; air-gapped deployments are not currently
-> supported. The remainder of this document describes the desired-state
-> architecture.
-All CaaS networking resources, endpoint addresses, and VIP allocation use
-IPv4 only. IPv6 and dual-stack networking are not supported.
 
 ## Motivation
 
@@ -439,7 +427,7 @@ This feature inherits the existing security model:
 - Tenant isolation via `osac.openshift.io/tenant` annotation enforced by OPA policies
 - Auto-provisioned resources (ExternalIP, ExternalIPAttachment) inherit tenant annotation from parent Cluster
 - No new authentication or authorization changes
-- SecurityGroup rules control cluster node traffic (tenant-configurable via explicit SG or default SG). The default SecurityGroup is hard-coded to permit all traffic. When SecurityGroup rules overlap or contradict, the most specific matching rule wins.
+- SecurityGroup enforcement follows the [Unified Networking SecurityGroup rule semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics) for explicit and default SecurityGroups.
 
 ### Failure Handling and Recovery
 

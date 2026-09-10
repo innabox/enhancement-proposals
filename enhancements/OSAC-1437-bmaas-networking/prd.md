@@ -6,10 +6,7 @@
 | Jira        | https://redhat.atlassian.net/browse/OSAC-1437 |
 | Date        | 2026-07-08 |
 
-> This PRD is an expansion of the [Unified Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md), scoped to the specific service type. The unified PRD defines the shared architectural requirements; this document defines the service-specific requirements and user stories.
-
-BMaaS networking uses IPv4 CIDRs and IPv4 address discovery only. IPv6 and
-dual-stack networking are not supported.
+> This PRD is an expansion of the [Unified Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md), scoped to the specific service type. The unified PRD defines the shared networking resources and operation contract; the [Unified Networking design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology) defines the supported IPv4-only, connected single-hub boundary. This document defines the BMaaS-specific requirements and user stories.
 
 ## 1. Problem Statement
 
@@ -133,7 +130,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - [ ] Creating a bare-metal server with more than one network attachment returns a single-NIC validation error
 - [ ] Bare-metal server attachment IP is visible in status after network connectivity is configured
 - [ ] External IP attachment with bare-metal server target routes inbound traffic to the server's single attachment IP
-- [ ] Updating or patching `network_attachments`, `auto_external_ip_attachment`, or any attachment field is rejected; network-owned data exposes create, read, and delete only, and changes require delete and recreate
+- [ ] Updating or patching `network_attachments`, `auto_external_ip_attachment`, or any attachment field is rejected under the [unified networking operation contract](/enhancements/OSAC-1433-unified-networking/prd.md#network-operation-contract)
 
 ## 6. Assumptions
 

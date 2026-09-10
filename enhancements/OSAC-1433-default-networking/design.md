@@ -20,7 +20,7 @@ superseded-by:
 
 # Default Networking — Simplified Resource Creation
 
-Default networking provides automatic IPv4 resource provisioning at tenant onboarding (including an IPv4 subnet and NATGateway), optional resource-specific network attachments with defaults, auto ExternalIP provisioning, and auto-cleanup on deletion. IPv6 and dual-stack networking are not supported.
+Default networking provides automatic resource provisioning at tenant onboarding (including a default Subnet and NATGateway), optional resource-specific network attachments with defaults, auto ExternalIP provisioning, and auto-cleanup on deletion.
 
 ## Summary
 
@@ -28,17 +28,9 @@ This document is a per-service expansion of the [Unified Networking EP](/enhance
 Shared field types, formats, presence rules, allowed values, and validation
 are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
 
-## Deployment Topology
-
-This design supports exactly one hub cluster per OSAC deployment. Multi-hub
-deployments are not supported. The default VirtualNetwork, Subnet,
-SecurityGroup, NATGateway, and ExternalIP resources created during tenant
-onboarding follow the unified networking reconciliation path through that hub.
-
-> **Current implementation boundary:** The current OSAC implementation supports
-> connected deployments only; air-gapped deployments are not currently
-> supported. The remainder of this document describes the desired-state
-> architecture.
+The shared networking resource model, IPv4-only scope, and connected
+single-hub deployment boundary are defined by the [Unified Networking
+design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology).
 
 ## Motivation
 
@@ -60,12 +52,10 @@ A reachable resource in OSAC requires networking resources: VirtualNetwork, Subn
 - UI support for simplified creation (deferred — API and CLI only)
 - Automatic migration of existing resources to use defaults
 
-### SecurityGroup Defaults and Rule Evaluation
-
-The default SecurityGroup created during tenant onboarding is hard-coded to
-permit all traffic. When SecurityGroup rules overlap or contradict, the most
-specific matching rule wins. These semantics apply to both ingress and egress
-and are shared by every resource type that uses the default attachment.
+SecurityGroup rule evaluation is defined by the [Unified Networking
+SecurityGroup rule semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics).
+Default networking creates the default SecurityGroup with the shared
+hard-coded permit-all policy.
 
 ### Catalog Item interaction
 
@@ -99,16 +89,10 @@ not Catalog Item policy. A shared Catalog Item cannot lock or default a
 tenant-local Subnet or SecurityGroup; it must leave that choice editable or
 ungoverned so tenant defaults can apply.
 
-### Network operation contract
-
-Default networking follows the unified networking operation contract:
-network-owned resources and workload network-attachment fields are
-create/read/delete-only. Their network-owned `spec` fields are immutable after
-creation, including the rules in a default SecurityGroup. A requested change
-requires deleting and recreating the affected resource after dependencies are
-removed. Controllers may update status and finalizers. Catalog Item
-definitions and metadata, and non-network workload fields, are outside this
-restriction.
+Default networking follows the [unified networking operation
+contract](/enhancements/OSAC-1433-unified-networking/design.md#supported-operations-and-immutability).
+This document defines only the default-resource lifecycle and
+auto-provisioned-resource behavior that is specific to this enhancement.
 
 ## Proposal
 
@@ -453,7 +437,11 @@ This feature inherits the existing security model:
 - Default SecurityGroup rules are fixed at creation; replacing the default requires delete and recreate after dependencies are removed
 
 **Risk: Default SecurityGroup too permissive**
-- Mitigation: The default SecurityGroup is intentionally permissive. When rules overlap or contradict, the most specific matching rule wins. Tightening the default requires replacing the default network and its dependent workloads.
+- Mitigation: The default SecurityGroup is intentionally permissive; its rule
+  evaluation follows the [Unified Networking SecurityGroup rule
+  semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics).
+  Tightening the default requires replacing the default network and its
+  dependent workloads.
 
 ### Failure Handling and Recovery
 
@@ -514,7 +502,11 @@ No new metrics or alerts (existing provisioning duration and failure rate metric
 
 **Impact:** All tenants receive the same hard-coded permit-all default SecurityGroup. If it is not subsequently tightened, all tenants' resources may be exposed.
 
-**Mitigation:** The default SecurityGroup starts with the hard-coded permit-all policy. When rules overlap or contradict, the most specific matching rule wins. Tightening the default requires replacing the default network and its dependent workloads.
+**Mitigation:** The default SecurityGroup starts with the hard-coded permit-all
+policy. Rule evaluation follows the [Unified Networking SecurityGroup rule
+semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics).
+Tightening the default requires replacing the default network and its
+dependent workloads.
 
 **Reviewed by:** Cloud Infrastructure Admin
 

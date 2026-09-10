@@ -6,10 +6,7 @@
 | Jira        | https://redhat.atlassian.net/browse/OSAC-1435 |
 | Date        | 2026-07-08 |
 
-> This PRD is an expansion of the [Unified Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md), scoped to the specific service type. The unified PRD defines the shared architectural requirements; this document defines the service-specific requirements and user stories.
-
-VMaaS networking uses IPv4 CIDRs only. IPv6 and dual-stack networking are not
-supported.
+> This PRD is an expansion of the [Unified Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md), scoped to the specific service type. The unified PRD defines the shared networking resources and operation contract; the [Unified Networking design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology) defines the supported IPv4-only, connected single-hub boundary. This document defines the VMaaS-specific requirements and user stories.
 
 ## 1. Problem Statement
 
@@ -104,7 +101,7 @@ Tenants cannot create VMs with multiple network interfaces or designate which in
 - [ ] Deleting a VM with auto-provisioned external IP causes the auto-created IP and attachment to be cleaned up automatically
 - [ ] Creating a VM using the old network configuration format succeeds and is internally converted to the new format
 - [ ] Creating a VM with both old and new configuration formats returns an error
-- [ ] Updating or patching a VM's network attachment list or any attachment field is rejected; changing it requires delete and recreate
+- [ ] Updating or patching a VM's network attachment list or any attachment field is rejected; changing it requires delete and recreate under the [unified networking operation contract](/enhancements/OSAC-1433-unified-networking/prd.md#network-operation-contract)
 
 ## 6. Assumptions
 

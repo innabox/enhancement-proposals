@@ -27,22 +27,13 @@ This enhancement is an expansion of the [Unified Networking EP](/enhancements/OS
 Shared field types, formats, presence rules, allowed values, and validation
 are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
 
+The shared networking resource model, IPv4-only scope, and connected
+single-hub deployment boundary are defined by the [Unified Networking
+design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology).
+The shared operation contract is defined by [Supported Operations and
+Immutability](/enhancements/OSAC-1433-unified-networking/design.md#supported-operations-and-immutability).
+
 ComputeInstance currently uses a shared `NetworkAttachment` message that lacks a `primary` field, preventing multi-NIC VM provisioning with a designated default gateway. This enhancement introduces `ComputeNetworkAttachment` with a `primary` field, makes `compute_network_attachments` optional (populating with tenant defaults when omitted), and adds `auto_external_ip_attachment` to enable fully connected VMs in a single API call. See [PRD](prd.md) for detailed requirements.
-
-## Deployment Topology
-
-This design supports exactly one hub cluster per OSAC deployment. Multi-hub
-deployments are not supported. VirtualNetwork, Subnet, SecurityGroup, and
-ExternalIP resources used by VMaaS follow the unified networking
-reconciliation path through that hub. Hosting clusters may still be distinct
-workload targets for the K8s overlay.
-
-> **Current implementation boundary:** The current OSAC implementation supports
-> connected deployments only; air-gapped deployments are not currently
-> supported. The remainder of this document describes the desired-state
-> architecture.
-All VM networking resources and attachments use IPv4 CIDRs only. IPv6 and
-dual-stack networking are not supported.
 
 ## Motivation
 
@@ -337,7 +328,7 @@ This feature inherits the existing security model:
 - Tenant isolation via `osac.openshift.io/tenant` annotation enforced by OPA policies
 - Auto-provisioned resources (ExternalIP, ExternalIPAttachment) inherit tenant annotation from parent ComputeInstance
 - No new authentication or authorization changes
-- SecurityGroup rules control VM traffic (tenant-configurable via explicit SG or default SG). The default SecurityGroup is hard-coded to permit all traffic. When SecurityGroup rules overlap or contradict, the most specific matching rule wins.
+- SecurityGroup enforcement follows the [Unified Networking SecurityGroup rule semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics) for explicit and default SecurityGroups.
 - Multi-NIC VMs on different subnets share the same SecurityGroup enforcement (pod labels apply to all interfaces)
 
 ### Failure Handling and Recovery

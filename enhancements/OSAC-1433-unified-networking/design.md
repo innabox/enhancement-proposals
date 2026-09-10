@@ -1327,6 +1327,11 @@ SecurityGroup, ExternalIPPool, ExternalIP, ExternalIPAttachment, and
 NATGateway) are reconciled through that hub, and their `status.hub` fields
 identify the deployment's hub.
 
+The currently supported deployment boundary is connected deployments only;
+air-gapped deployments are not currently supported. All shared networking
+resources and manager integrations use IPv4; IPv6 and dual-stack networking
+are not supported.
+
 Hosting clusters are distinct from the hub. Where a `k8sManager` is
 configured, subnet creation provisions the K8s overlay on each hosting cluster
 and bridges it to the fabric segment. VMs on different hosting clusters share

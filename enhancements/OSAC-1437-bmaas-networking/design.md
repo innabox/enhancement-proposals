@@ -34,27 +34,17 @@ This document is a per-service expansion of the [Unified Networking EP](/enhance
 Shared field types, formats, presence rules, allowed values, and validation
 are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
 
+The shared networking resource model, IPv4-only scope, and connected
+single-hub deployment boundary are defined by the [Unified Networking
+design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology).
+The shared operation contract is defined by [Supported Operations and
+Immutability](/enhancements/OSAC-1433-unified-networking/design.md#supported-operations-and-immutability).
+
 BaremetalInstance supports `BareMetalNetworkAttachment` with an optional
 interface selector; its single attachment is implicitly primary. The
 bare-metal-fulfillment-operator's `reconcileNetworking` phase configures the
 selected switch port via dispatcher, and IP address feedback via CR status
 enables DNAT rule creation. See [PRD](prd.md) for detailed requirements.
-
-## Deployment Topology
-
-This design supports exactly one hub cluster per OSAC deployment. Multi-hub
-deployments are not supported. BareMetalInstance networking resources and
-their associated provisioning CRs follow the unified networking reconciliation
-path through that hub. Bare-metal servers and fabric switches are data-plane
-infrastructure, not additional hubs.
-
-> **Current implementation boundary:** The current OSAC implementation supports
-> connected deployments only; air-gapped deployments are not currently
-> supported. The remainder of this document describes the desired-state
-> architecture.
-
-All BMaaS networking resources, attachments, and discovered addresses use IPv4
-only. IPv6 and dual-stack networking are not supported.
 
 ## Motivation
 
@@ -684,8 +674,8 @@ This feature inherits the existing security model:
 - Tenant isolation via `osac.openshift.io/tenant` annotation enforced by OPA policies
 - Auto-provisioned resources (ExternalIP, ExternalIPAttachment) inherit tenant annotation from parent BaremetalInstance
 - No new authentication or authorization changes
-- SecurityGroup rules control BM inbound traffic (tenant-configurable via explicit SG or default SG)
-- The single BMaaS tenant attachment uses the SecurityGroup rules for its Subnet
+- SecurityGroup enforcement follows the [Unified Networking SecurityGroup rule semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics) for explicit and default SecurityGroups.
+- The single BMaaS tenant attachment uses the SecurityGroup rules for its Subnet.
 
 ### Failure Handling and Recovery
 
