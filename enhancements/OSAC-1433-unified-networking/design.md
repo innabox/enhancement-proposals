@@ -107,6 +107,86 @@ controller-owned transitions are not user/API updates to network-owned
 `spec` fields. Non-network fields on ComputeInstance, Cluster, and
 BaremetalInstance remain governed by their own designs.
 
+## Field Types, Formats, and Validation
+
+The protobuf wire type alone is not the complete API contract. Every
+network-owned field must also have a defined format, presence/default rule,
+allowed-value set, reference scope, and cross-field validation. The following
+is the canonical contract for the currently supported IPv4 networking surface.
+Service-specific designs inherit these rules and add only their attachment
+cardinality or placement constraints.
+
+### Common formats
+
+| Value | Contract |
+|---|---|
+| IPv4 CIDR | String in canonical dotted-decimal CIDR notation, `a.b.c.d/prefix`, with prefix `0..32` and host bits zero. IPv6 and dual-stack values are rejected. A Subnet CIDR must be contained by its parent VirtualNetwork CIDR and Subnet CIDRs must not overlap within that VirtualNetwork. |
+| IPv4 address | String in dotted-decimal IPv4 notation without a CIDR suffix. Address fields are system/provider results, not alternate encodings of CIDRs. |
+| Resource reference | A reference to an existing resource in the scope defined below; arbitrary strings are invalid. Use the typed local/full reference forms defined by [OSAC-1330](</enhancements/OSAC-1330-type-safe-resource-references/design.md>) as they become available, while preserving the documented resource scope. |
+| Enum | Only the values listed in the relevant table are accepted. Unknown, future, and unspecified values are rejected for user-set fields unless explicitly marked as a status value. |
+| Repeated field | Cardinality, uniqueness, and ordering are part of the field contract. Duplicate references are rejected; ordering is meaningful only where explicitly stated. |
+| Timestamp | If exposed in an API status or audit field, use `google.protobuf.Timestamp` / RFC 3339 semantics in UTC. Timestamps are controller/system fields and are not tenant network configuration. |
+| Metadata name | Standard resource metadata rules apply; metadata is outside the network-owned field contract and is not changed by this design. |
+
+### Network resource fields
+
+| Resource and field | Wire type / presence | Allowed values and validation |
+|---|---|---|
+| `NetworkClass.spec.fabric_manager` | String reference, required | Must name a provider-registered fabric manager. The accepted manager identifiers are deployment configuration, not tenant input. |
+| `NetworkClass.spec.k8s_manager` | String reference, optional | Must name a provider-registered K8s manager. Omission is valid for deployments without VM hosting; a VM create request is rejected when it is absent. |
+| `NetworkClass.spec.defaults` | `NetworkDefaults` message, optional in the base API | Required when the Default Networking enhancement is enabled. `virtual_network_cidr` and `ipv4_subnet_cidr` are IPv4 CIDRs; the subnet must be contained by the VN. |
+| `NetworkClass.spec.metallb_vip_prefix_length` | `int32`, optional | Used only for CaaS. When set, it must be a valid IPv4 prefix and more specific than each participating Subnet prefix; the reserved range must remain inside the Subnet. |
+| `NetworkClass.spec.east_west_config` | `EastWestConfig` message, optional | Only the Phase 1 Ethernet configuration is supported. InfiniBand and NVLink configuration is not a supported user value. |
+| `VirtualNetwork.spec.network_class` | Resource reference, required | Must reference the provider NetworkClass for the deployment. Cross-tenant or nonexistent references are rejected. |
+| `VirtualNetwork.spec.ipv4_cidr` | IPv4 CIDR string, required | Must be a canonical IPv4 network CIDR. Cross-tenant CIDR overlap is allowed only because fabric isolation is explicitly relied upon; Subnet overlap within the VN is rejected. |
+| `Subnet.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a VirtualNetwork in the same tenant/project. |
+| `Subnet.spec.ipv4_cidr` | IPv4 CIDR string | The networking examples require this at create time. The type-safe-reference design currently marks it optional, so this presence rule must be reconciled before the API is considered complete. |
+| `SecurityGroup.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a VirtualNetwork in the same tenant/project. |
+| `SecurityGroup.spec.rules` | Repeated `SecurityGroupRule` | The rule list is create-time-only. Exact empty-list behavior, maximum size, duplicate handling, and rule precedence tie-breaking still need an authoritative definition. |
+| `ExternalIPPool.spec.ip_family` | Enum, required | `IPV4` only. IPv6 and dual-stack values are rejected. |
+| `ExternalIPPool.spec.cidrs` | Repeated IPv4 CIDR strings, required | At least one canonical IPv4 CIDR; entries must be unique and non-overlapping within the deployment. |
+| `ExternalIP.spec.pool` | Provider/deployment-scoped ExternalIPPool reference, required | The pool must exist, be Ready, and have capacity. The allocated address is selected by the provider/fabric manager; tenants do not supply an arbitrary address. |
+| `ExternalIPAttachmentSpec.external_ip` | Local ExternalIP reference, required | The ExternalIP must exist and cannot already be consumed by another ExternalIPAttachment or NATGateway. |
+| `ExternalIPAttachmentSpec.target` | Required `oneof` | Exactly one of `compute_instance`, `cluster`, or `baremetal_instance` must be set. The target must be in the permitted tenant/project scope. |
+| `ExternalIPAttachmentSpec.target_endpoint` | `ExternalIPAttachmentEndpoint` enum | `API` or `INGRESS` is required for a Cluster target. `UNSPECIFIED` is required for ComputeInstance and BaremetalInstance targets. |
+| `NATGateway.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a VirtualNetwork in the same tenant/project; only one NATGateway is allowed per VN. |
+| `NATGateway.spec.external_ip` | Local ExternalIP reference, required | Must reference an allocated, unconsumed ExternalIP in the same tenant/project. |
+| `FabricDomain.spec.type` | `FabricDomainType` enum, required | `ETHERNET_EW` is the only supported Phase 1 value. `INFINIBAND_EW` and `NVLINK` are rejected as unsupported. |
+| `FabricDomain.spec.servers` | Repeated provider server references/hostnames, required | Must be non-empty and contain unique eligible servers. Exact hostname/reference syntax and cross-domain membership rules must be defined by the inventory contract. |
+| `FabricDomain.spec.virtual_networks` | Repeated local VirtualNetwork references, required | Exactly one entry in Phase 1; it must reference a same-tenant VirtualNetwork. |
+
+### SecurityGroupRule fields
+
+The current documents identify these fields but do not yet close their value
+contract. They must not be treated as arbitrary strings:
+
+| Field | Current documented type | Required clarification |
+|---|---|---|
+| `direction` | String | Close the enum to `ingress` and `egress`; reject every other token. |
+| `protocol` | String | The examples use `tcp`, `udp`, and `icmp`, but the current `etc.` wording leaves the set open. The supported protocol enum must be finalized. |
+| `port` | `int32` | Define the range, whether ranges are supported, and whether `0` is valid only for ICMP. |
+| `source` | String | Define as canonical IPv4 CIDR for ingress and either rename or explicitly define the same field as destination CIDR for egress. |
+| Rule evaluation | N/A | Define statefulness, implicit deny/permit behavior, duplicate rules, and deterministic tie-breaking when rules have equal specificity. |
+
+### Workload network fields
+
+| Field | Wire type / presence | Allowed values and validation |
+|---|---|---|
+| `ComputeInstance.compute_network_attachments` | Repeated `ComputeNetworkAttachment`, optional | Omission invokes Catalog/Template/tenant-default resolution. An explicit list must be non-empty, contain unique entries, and all Subnets must belong to one VN. Maximum supported list size is not currently stated. |
+| `ComputeNetworkAttachment.subnet` | Local Subnet reference, required | Subnet must exist and be Ready. |
+| `ComputeNetworkAttachment.security_groups` | Repeated local SecurityGroup references, optional | Zero or more same-VN references; duplicate and non-ready references must be rejected. |
+| `ComputeNetworkAttachment.primary` | Boolean | One attachment is implicitly primary; multiple attachments require exactly one `true`. The behavior of explicit `false` on a single attachment must be defined. |
+| `Cluster.network_attachment` | `ClusterNetworkAttachment`, optional | Omission invokes default resolution; when present, exactly one attachment applies to every node set. |
+| `BaremetalInstance.network_attachments` | Repeated `BareMetalNetworkAttachment`, optional | Omission invokes default resolution; when present, exactly one entry is allowed. |
+| `BareMetalNetworkAttachment.interface` | String reference/name, optional in the proto | If set, it must identify a valid non-lifecycle port. The documents currently conflict on whether the tenant must always provide it or whether the provider may select the default. |
+| `BareMetalNetworkAttachment.primary` | Boolean | The single BM attachment is implicitly primary. Whether callers must omit this field or must send `true` must be specified. |
+| `auto_external_ip_attachment` | Boolean, optional | Defaults to `false`; when `true`, the system creates the supported automatic ExternalIP resources. It is create-time-only. |
+
+The service-specific documents must not introduce a different type, format,
+default, or validation rule for these shared fields. Unresolved entries above
+are contract gaps, not permission to infer behavior from implementation
+details.
+
 ## Proposal
 
 ### NetworkClass

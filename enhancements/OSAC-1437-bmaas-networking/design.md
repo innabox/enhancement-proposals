@@ -31,6 +31,9 @@ supported.
 
 This document is a per-service expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md). The unified EP defines the shared architecture (NetworkClass, dispatcher, infrastructure-agnostic subnets, resource hierarchy); this document defines how BMaaS consumes that architecture.
 
+Shared field types, formats, presence rules, allowed values, and validation
+are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
+
 BaremetalInstance supports `BareMetalNetworkAttachment` with an optional
 interface selector; its single attachment is implicitly primary. The
 bare-metal-fulfillment-operator's `reconcileNetworking` phase configures the

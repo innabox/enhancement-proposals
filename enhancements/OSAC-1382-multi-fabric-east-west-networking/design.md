@@ -36,6 +36,9 @@ created in that VN's Netris VPC and nodes remain reachable on N-S. Backend
 config (`template_id`, …) lives on **NetworkClass**. No new VPC resource is
 introduced.
 
+Shared networking field types, formats, presence rules, allowed values, and
+validation are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
+
 The AAP path for Server Cluster create/delete is already implemented
 (osac-aap PR #447). VPC → Server Cluster in existing VPC → OSAC Subnet
 coexistence and tenant isolation were validated on zeus12.

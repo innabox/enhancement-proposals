@@ -389,6 +389,8 @@ DNAT target.
 - [ ] `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` are immutable as complete lists, including every attachment field
 - [ ] `Cluster.network_attachment` and `BaremetalInstance.network_attachments` are immutable, including every attachment field
 - [ ] `auto_external_ip_attachment` is immutable after workload creation; changing it requires delete and recreate
+- [ ] Every network-owned field documents its wire type, format, presence/default behavior, allowed values, reference scope, and cross-field validation
+- [ ] Unsupported, unknown, or otherwise undefined network field values are rejected rather than inferred by clients or agents
 - [ ] Changing any network-owned field requires deleting and recreating the affected resource or workload
 - [ ] Controllers can update status, conditions, readiness, IP-discovery results, and finalizers without changing network-owned `spec` fields
 - [ ] Non-network workload fields and Catalog Item definitions and metadata remain governed by their existing designs

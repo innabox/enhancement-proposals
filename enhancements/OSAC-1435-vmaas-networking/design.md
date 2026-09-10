@@ -24,6 +24,9 @@ This enhancement extends the unified networking API to support VMaaS-specific re
 
 This enhancement is an expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md), providing the detailed per-service flow for this service type. The unified EP defines the shared architecture (NetworkClass, dispatcher, infrastructure-agnostic subnets, resource hierarchy); this document defines how this specific service consumes that architecture.
 
+Shared field types, formats, presence rules, allowed values, and validation
+are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
+
 ComputeInstance currently uses a shared `NetworkAttachment` message that lacks a `primary` field, preventing multi-NIC VM provisioning with a designated default gateway. This enhancement introduces `ComputeNetworkAttachment` with a `primary` field, makes `compute_network_attachments` optional (populating with tenant defaults when omitted), and adds `auto_external_ip_attachment` to enable fully connected VMs in a single API call. See [PRD](prd.md) for detailed requirements.
 
 ## Deployment Topology

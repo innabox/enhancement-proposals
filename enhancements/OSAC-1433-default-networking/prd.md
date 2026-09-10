@@ -35,7 +35,7 @@ are not supported.
 ### 2.2 Non-Goals
 
 - Custom default configurations per tenant (all tenants in a deployment
-  receive the same default CIDR and SecurityGroup rules)
+  receive the same default CIDR and hard-coded default SecurityGroup policy)
 - Auto-provisioning of VirtualNetworks or Subnets beyond the initial
   default (tenants create additional VNs manually)
 - UI support for simplified creation (deferred — API and CLI only for now)
@@ -69,10 +69,9 @@ are not supported.
 
 ### Cloud Infrastructure Admin Stories
 
-- As a Cloud Infrastructure Admin, I want to configure a default CIDR
-  range and default SecurityGroup rules on the NetworkClass, so that the
-  system can auto-create default networking resources for tenants at
-  onboarding
+- As a Cloud Infrastructure Admin, I want to configure the default CIDR
+  range on the NetworkClass, so that the system can auto-create default
+  networking resources for tenants at onboarding
 
 ### Cloud Provider Admin Stories
 
@@ -95,10 +94,10 @@ are not supported.
   inspect the failure and retry by deleting and re-creating the tenant.
   [User]
 - **FR-2:** The Cloud Infrastructure Admin supplies default networking
-  parameters (IPv4 CIDR and SecurityGroup rules) when creating the
-  NetworkClass. Defaults are required — a NetworkClass without defaults is
-  rejected at creation time, and the NetworkClass network configuration is
-  immutable thereafter. [User]
+  parameters (IPv4 VN and Subnet CIDRs) when creating the NetworkClass. The
+  default SecurityGroup uses the hard-coded permit-all policy. Defaults are
+  required — a NetworkClass without defaults is rejected at creation time,
+  and the NetworkClass network configuration is immutable thereafter. [User]
 - **FR-3:** All tenants receive the same default IPv4 CIDR ranges as configured
   on the NetworkClass. Tenants are isolated at the
   network level — the unified networking API provides VirtualNetworks

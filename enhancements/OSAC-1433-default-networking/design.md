@@ -25,6 +25,8 @@ Default networking provides automatic IPv4 resource provisioning at tenant onboa
 ## Summary
 
 This document is a per-service expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md), providing default networking automation and simplified resource creation. When a tenant is created, the system provisions a default VirtualNetwork, IPv4 Subnet, SecurityGroup, and NATGateway based on NetworkClass configuration. Resources (ComputeInstance, Cluster, BaremetalInstance) can omit network_attachments and use tenant defaults. For BMaaS, default resolution produces one tenant network attachment on one physical NIC; BMaaS does not support multi-NIC or multi-homed attachments. Auto ExternalIP modes enable fully connected resources in a single API call. See [PRD](prd.md) for detailed requirements.
+Shared field types, formats, presence rules, allowed values, and validation
+are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
 
 ## Deployment Topology
 
@@ -128,15 +130,6 @@ The design covers three capabilities: default networking (including NATGateway) 
      defaults:
        virtualNetworkCIDR: 10.0.0.0/16
        ipv4SubnetCIDR: 10.0.1.0/24
-       securityGroupRules:
-       - direction: ingress
-         protocol: tcp
-         port: 22
-         source: 0.0.0.0/0
-       - direction: ingress
-         protocol: tcp
-         port: 443
-         source: 0.0.0.0/0
    ```
 
 2. **Cloud Provider Admin creates Tenant:**
@@ -274,14 +267,6 @@ message NetworkClassSpec {
 message NetworkDefaults {
   string virtual_network_cidr = 1;  // e.g., "10.0.0.0/16"
   string ipv4_subnet_cidr = 2;      // e.g., "10.0.1.0/24"
-  repeated SecurityGroupRule security_group_rules = 3;
-}
-
-message SecurityGroupRule {
-  string direction = 1;   // "ingress" or "egress"
-  string protocol = 2;    // "tcp", "udp", "icmp", etc.
-  int32 port = 3;         // port number (0 for ICMP)
-  string source = 4;      // CIDR (for ingress) or destination (for egress)
 }
 ```
 
@@ -355,14 +340,6 @@ type NetworkClassSpec struct {
 type NetworkDefaults struct {
     VirtualNetworkCIDR string              `json:"virtualNetworkCIDR,omitempty"`
     IPv4SubnetCIDR     string              `json:"ipv4SubnetCIDR,omitempty"`
-    SecurityGroupRules []SecurityGroupRule  `json:"securityGroupRules,omitempty"`
-}
-
-type SecurityGroupRule struct {
-    Direction string `json:"direction"` // ingress or egress
-    Protocol  string `json:"protocol"`  // tcp, udp, icmp, etc.
-    Port      int32  `json:"port"`      // port number
-    Source    string `json:"source"`    // CIDR
 }
 ```
 
@@ -476,7 +453,7 @@ This feature inherits the existing security model:
 - Default SecurityGroup rules are fixed at creation; replacing the default requires delete and recreate after dependencies are removed
 
 **Risk: Default SecurityGroup too permissive**
-- Mitigation: The default SecurityGroup is intentionally permissive. When rules overlap or contradict, the most specific matching rule wins. A provider must supply the intended rules at NetworkClass creation time; changing them later requires replacing the default network.
+- Mitigation: The default SecurityGroup is intentionally permissive. When rules overlap or contradict, the most specific matching rule wins. Tightening the default requires replacing the default network and its dependent workloads.
 
 ### Failure Handling and Recovery
 
@@ -537,7 +514,7 @@ No new metrics or alerts (existing provisioning duration and failure rate metric
 
 **Impact:** All tenants receive the same hard-coded permit-all default SecurityGroup. If it is not subsequently tightened, all tenants' resources may be exposed.
 
-**Mitigation:** The default SecurityGroup starts with the hard-coded permit-all policy. When rules overlap or contradict, the most specific matching rule wins. A provider must supply the intended rules at NetworkClass creation time; changing them later requires replacing the default network.
+**Mitigation:** The default SecurityGroup starts with the hard-coded permit-all policy. When rules overlap or contradict, the most specific matching rule wins. Tightening the default requires replacing the default network and its dependent workloads.
 
 **Reviewed by:** Cloud Infrastructure Admin
 
