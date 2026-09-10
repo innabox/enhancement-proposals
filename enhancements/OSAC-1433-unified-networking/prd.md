@@ -224,7 +224,7 @@ the cluster's VIPs are discovered (see
 - Support pluggable networking backends that can be added without API changes
 - Enable VMs, clusters, and bare-metal servers to coexist in the same VirtualNetwork
 - Work in air-gapped environments using data-center-routable IPs
-- Support per-interface network attachment for bare-metal servers with multiple physical interfaces
+- Support one tenant network attachment for each bare-metal server, selected from the host type's physical interfaces
 
 ### 2.2 Success Metrics
 
@@ -239,8 +239,8 @@ the cluster's VIPs are discovered (see
 - VPC Peering / cross-VN communication (separate enhancement)
 - DNS API for tenant-managed DNS zones (separate enhancement)
 - Advanced per-physical-interface configuration for BaremetalInstance (NIC
-  bonding, VLAN trunking, etc. — basic per-interface subnet attachment is
-  supported via the `interface` field on NetworkAttachment)
+  bonding, VLAN trunking, or multiple tenant attachments; BMaaS uses one
+  physical NIC selected through the `interface` field)
 - Load Balancer API
 - Internet Gateway API
 - Quota enforcement for networking resources
@@ -272,10 +272,7 @@ the cluster's VIPs are discovered (see
 - As a tenant, I want to place my BaremetalInstance on Subnets in my
   VirtualNetwork
 - As a tenant, I want to see the available physical interfaces on a bare-metal
-  template so I can decide how to attach networks
-- As a tenant, I want to attach different physical interfaces of my
-  BaremetalInstance to different Subnets (e.g., data interface to a data
-  subnet, management interface to a management subnet)
+  template so I can select the one interface used for my tenant network
 - As a tenant, I want to attach an ExternalIP to my bare-metal server for
   inbound access
 
@@ -329,11 +326,13 @@ Providers configure which networking backends handle network operations.
 Tenants never choose networking backends — the system selects them based
 on the provider's configuration.
 
-#### FR-7: Per-interface network attachment for bare metal (R7)
+#### FR-7: Single network attachment for bare metal (R7)
 
-Bare-metal servers have multiple physical interfaces. Tenants must be able to
-attach different interfaces to different Subnets based on the interface
-descriptions provided by the template.
+Bare-metal host types may expose multiple physical interfaces. A
+`BaremetalInstance` accepts at most one tenant network attachment, selected
+from the interface descriptions provided by the template. The selected
+attachment supplies the server's tenant IP, default route, and ExternalIP
+DNAT target.
 
 ### 4.2 Non-Functional Requirements
 
@@ -354,7 +353,7 @@ _No non-functional requirements were specified in the original document._
 - [ ] Any resource type (ComputeInstance, Cluster, BaremetalInstance) can be placed on any subnet
 - [ ] VMs, BM servers, and cluster nodes receive uniform networking treatment — SecurityGroup and ExternalIP operations work identically regardless of resource type
 - [ ] SecurityGroup enforcement is uniform across all resource types
-- [ ] Each resource type has its own network attachment configuration appropriate to the resource (e.g., bare-metal servers support per-interface attachment, clusters use a single shared attachment)
+- [ ] Each resource type has its own network attachment configuration appropriate to the resource (e.g., BMaaS uses one physical attachment, clusters use a single shared attachment)
 - [ ] ExternalIPAttachment supports all three service types as targets
 - [ ] The tenant workflow for creating networking resources is identical regardless of service type
 
@@ -380,8 +379,7 @@ _No non-functional requirements were specified in the original document._
 
 - [ ] Host types describe available interfaces (name, role, description) for bare-metal servers
 - [ ] Bare-metal network attachments include an optional interface reference that identifies a named interface from the host type
-- [ ] Multiple network attachments are supported for bare-metal servers — one per physical interface
-- [ ] The same interface cannot appear in multiple attachments
+- [ ] Bare-metal servers accept at most one network attachment, using one valid physical interface
 - [ ] All referenced subnets must belong to the same VirtualNetwork
 
 ## 6. Dependencies

@@ -16,11 +16,11 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 ### 2.1 Goals
 
-- A tenant can provision a bare-metal server with explicit network attachments, each specifying which physical interface connects to which subnet
+- A tenant can provision a bare-metal server with one explicit network attachment specifying which physical interface connects to which subnet
 - A tenant can create a bare-metal server with `--external-ip-attachment` and have the system allocate an external IP for inbound access automatically
 - Network attachments are optional — when omitted, the system attaches the server to the tenant's default subnet and security group
 - Host types expose available physical network interfaces through the API (name, role, description) for bare-metal servers
-- Network connectivity for each attachment is established before bare-metal OS provisioning begins
+- Network connectivity for the single attachment is established before bare-metal OS provisioning begins
 - External IP attachments support bare-metal servers as a target type
 - The system uses a distinct configuration parameter for network automation backend selection, separate from the networking resource hierarchy
 
@@ -36,30 +36,29 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - Cluster or VM networking (this PRD covers bare-metal servers only; clusters and VMs are addressed in separate enhancements)
 - Network provisioning infrastructure implementation (deferred to Unified Networking EP implementation)
 - Fabric manager implementation (network fabric automation via templates)
-- Multi-interface failover or bonding (out of scope for initial implementation)
+- NIC failover or bonding (out of scope)
 
 ## 3. User Stories
 
 ### Tenant User Stories
 
-- As a Tenant User, I want to create a bare-metal server with explicit network attachments so that I can connect specific physical interfaces to specific subnets
-- As a Tenant User, I want to see which physical network interfaces are available on a host type so that I can select the appropriate interface when creating network attachments
+- As a Tenant User, I want to create a bare-metal server with one explicit network attachment so that I can connect one physical interface to one subnet
+- As a Tenant User, I want to see which physical network interfaces are available on a host type so that I can select the one interface used for my tenant network
 - As a Tenant User, I want to create a bare-metal server with `--external-ip-attachment` and have it externally reachable in a single API call, without manually creating external IP and attachment resources
-- As a Tenant User, I want to create a multi-homed bare-metal server (multiple network attachments) and designate which interface provides the default gateway
 - As a Tenant User, I want auto-provisioned external IPs to be automatically cleaned up when I delete the server, so that I do not accumulate orphaned resources
-- As a Tenant User, I want network interface validation when creating attachments so that I get clear errors if I specify an interface that doesn't exist or attach the same interface to multiple subnets
+- As a Tenant User, I want network interface validation when creating the attachment so that I get a clear error if I specify an interface that doesn't exist
 
 ### Tenant Admin Stories
 
-- As a Tenant Admin, I want visibility into which physical interfaces are connected to which subnets for a bare-metal server so that I can troubleshoot network connectivity issues
+- As a Tenant Admin, I want visibility into which physical interface is connected to the server's subnet so that I can troubleshoot network connectivity issues
 
 ### Cloud Infrastructure Admin Stories
 
-- As a Cloud Infrastructure Admin, I want to define available physical interfaces for each host type (name, role, description) so that tenants can discover and attach to the correct interfaces
+- As a Cloud Infrastructure Admin, I want to define available physical interfaces for each host type (name, role, description) so that tenants can discover and select the correct interface
 
 ### Cloud Provider Admin Stories
 
-- As a Cloud Provider Admin, I want to see which IP addresses were allocated to each network interface on a bare-metal server so that I can troubleshoot connectivity and external access configuration
+- As a Cloud Provider Admin, I want to see the IP address allocated to the selected network interface on a bare-metal server so that I can troubleshoot connectivity and external access configuration
 
 ## 4. Requirements
 
@@ -67,7 +66,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Network Attachment Specification
 
-- **FR-1:** Tenants can specify network attachments when creating a bare-metal server. Each attachment identifies a subnet (required, immutable), security groups (modifiable), which physical interface to use (optional, immutable), and whether this attachment provides the default gateway for multi-homed servers (immutable). [User]
+- **FR-1:** Tenants can specify at most one network attachment when creating a bare-metal server. The attachment identifies a subnet (required, immutable), security groups (modifiable), and which physical interface to use (optional, immutable). The single attachment is implicitly the default gateway. [User]
 
 #### Host Type Interface Discovery
 
@@ -75,11 +74,11 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Interface Validation
 
-- **FR-3:** The system validates that each physical interface specified in network attachments exists in the host type's interface list. The same interface cannot appear in multiple attachments. If more than one attachment is specified, each must identify an explicit physical interface (multiple attachments without interface names is invalid). The number of attachments cannot exceed the number of available interfaces on the host type. [User]
+- **FR-3:** The system validates that the physical interface specified in the attachment exists in the host type's interface list. A request containing more than one attachment is rejected. [User]
 
-#### Primary Gateway Designation
+#### Default Gateway
 
-- **FR-4:** When a bare-metal server has multiple network attachments, exactly one must be designated as the primary attachment (provides default gateway). When only one attachment exists, the primary designation is optional and treated as implicit. [User]
+- **FR-4:** The single network attachment is implicitly the primary attachment and provides the default gateway. [User]
 
 #### Optional Network Attachments with Defaults
 
@@ -87,19 +86,19 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Auto External IP
 
-- **FR-6:** Bare-metal servers support `--external-ip-attachment`. When enabled, the system auto-selects the external IP pool with the most available capacity, allocates an external IP, and creates an external IP attachment binding it to the server's primary attachment subnet IP. The external IP and attachment are labeled as auto-provisioned. [User]
+- **FR-6:** Bare-metal servers support `--external-ip-attachment`. When enabled, the system auto-selects the external IP pool with the most available capacity, allocates an external IP, and creates an external IP attachment binding it to the server's single attachment subnet IP. The external IP and attachment are labeled as auto-provisioned. [User]
 
 #### Network Connectivity Configuration
 
-- **FR-7:** Network connectivity for each attachment is established before bare-metal OS provisioning begins. The system configures connectivity for each interface-to-subnet mapping; all attachments must be ready before provisioning proceeds. After the server boots, it receives an IP address on the configured subnet. [User]
+- **FR-7:** Network connectivity for the single attachment is established before bare-metal OS provisioning begins. The system configures the selected interface-to-subnet mapping. After the server boots, it receives an IP address on the configured subnet. [User]
 
 #### IP Address Visibility
 
-- **FR-8:** The allocated IP address for each network attachment is visible in the bare-metal server status after network connectivity is configured. [User]
+- **FR-8:** The allocated IP address for the single network attachment is visible in the bare-metal server status after network connectivity is configured. [User]
 
 #### External IP Attachment for Bare-Metal
 
-- **FR-9:** External IP attachments support bare-metal servers as an attachment target type. When an external IP is attached to a bare-metal server, inbound traffic to the external IP is routed to the server's primary attachment IP. [User]
+- **FR-9:** External IP attachments support bare-metal servers as an attachment target type. When an external IP is attached to a bare-metal server, inbound traffic to the external IP is routed to the single attachment's IP. [User]
 
 #### Network Automation Backend Configuration
 
@@ -111,26 +110,26 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Network Attachment Deletion
 
-- **FR-12:** During bare-metal server deletion, the system deconfigures network connectivity for each interface and releases allocated IP addresses. [User]
+- **FR-12:** During bare-metal server deletion, the system deconfigures the selected network interface and releases its allocated IP address. [User]
 
 ### 4.2 Non-Functional Requirements
 
 - **NFR-1:** Auto external IP allocation completes synchronously within the create API call (no async allocation delay). If no pool has available capacity, the create API call returns an error. [User]
 
-- **NFR-2:** Network attachment provisioning (connectivity configuration) completes within 2 minutes per interface. [User]
+- **NFR-2:** Network attachment provisioning (connectivity configuration) completes within 2 minutes for the server's single attachment. [User]
 
 ## 5. Acceptance Criteria
 
-- [ ] A Tenant User can create a bare-metal server with explicit network attachments, each specifying a physical interface from the host type
+- [ ] A Tenant User can create a bare-metal server with one explicit network attachment specifying a physical interface from the host type
 - [ ] A Tenant User can create a bare-metal server with `--external-ip-attachment` and no explicit network attachments — the server is created on the default subnet with an auto-provisioned external IP for inbound access
-- [ ] A multi-interface bare-metal server (multiple network attachments) is provisioned with network connectivity configured for each interface, primary attachment providing default gateway
+- [ ] A bare-metal server with one network attachment is provisioned with connectivity configured for the selected interface, which provides the default gateway
 - [ ] Auto-created external IP and external IP attachment are labeled as auto-provisioned and visible in list views
 - [ ] Deleting a bare-metal server with auto-provisioned external IP causes the auto-created external IP and external IP attachment to be cleaned up automatically
 - [ ] Host type API returns structured physical network interface list for bare-metal host types (name, role, description)
 - [ ] Creating a bare-metal server with an invalid interface (not in host type's list) returns an error
-- [ ] Creating a bare-metal server with duplicate interfaces across attachments returns an error
-- [ ] Bare-metal server primary attachment IP is visible in status after network connectivity is configured
-- [ ] External IP attachment with bare-metal server target routes inbound traffic to the server's primary attachment IP
+- [ ] Creating a bare-metal server with more than one network attachment returns a single-NIC validation error
+- [ ] Bare-metal server attachment IP is visible in status after network connectivity is configured
+- [ ] External IP attachment with bare-metal server target routes inbound traffic to the server's single attachment IP
 
 ## 6. Assumptions
 

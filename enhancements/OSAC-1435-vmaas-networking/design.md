@@ -372,7 +372,7 @@ Supporting both old `network_attachments` (field 14) and new `compute_network_at
 
 Instead of creating `ComputeNetworkAttachment`, extend the shared `NetworkAttachment` message with an optional `primary` field usable by all resource types.
 
-**Rejected because:** Other resource types (Cluster, BaremetalInstance) have different attachment semantics (CaaS needs separate API/ingress attachments, BMaaS has no multi-NIC concept). Resource-specific attachment messages provide cleaner API surface and type-specific validation.
+**Rejected because:** Other resource types (Cluster, BaremetalInstance) have different attachment semantics (CaaS needs separate API/ingress attachments, while BMaaS supports exactly one tenant network attachment on one physical NIC). Resource-specific attachment messages provide cleaner API surface and type-specific validation.
 
 ### Alternative 2: Capacity exhaustion creates Failed resource instead of returning error
 

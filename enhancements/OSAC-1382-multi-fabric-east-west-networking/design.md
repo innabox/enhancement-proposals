@@ -443,6 +443,11 @@ Server Cluster Template example (Netris, infra-owned):
 FabricDomain does not repeat this. Changing NIC layout = change template on
 NetworkClass, not the domain object.
 
+These template-level NIC mappings are infrastructure-side fabric plumbing and
+do not change the BMaaS resource contract. A `BaremetalInstance` uses one
+tenant network attachment on one physical NIC; this design does not support
+multi-NIC or multi-homed BMaaS attachments.
+
 ---
 
 ## Workflow (Phase 1)
@@ -640,6 +645,8 @@ equivalent to "create a Server Cluster in a VPC" with an additional resource.
   hosts are assigned.
 - No server eligibility validation (admin trusted on hostnames).
 - NIC mapping only via Netris template.
+- BMaaS tenant attachments remain single-NIC; multiple NICs in a server
+  template are provider-side fabric plumbing, not multiple tenant attachments.
 - `template_id` is Netris-specific (scoped to NetworkClass).
 - Templates pre-created by infra; OSAC does not manage template lifecycle.
 - **Bare-metal only; no SR-IOV/VM EW.** FabricDomain membership is

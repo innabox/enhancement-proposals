@@ -111,7 +111,8 @@ where a single create command produces a reachable instance.
   Cluster, and BaremetalInstance is optional. When omitted, the system
   populates it with the tenant's default Subnet and default SecurityGroup.
   The resolved attachments are stored with the resource so the resource is
-  self-describing after creation. [User]
+  self-describing after creation. For BMaaS, resolution produces exactly one
+  tenant network attachment. [User]
 - **FR-7:** When a resource is created with explicit network attachments,
   no defaults are applied. [User]
 
@@ -162,6 +163,8 @@ where a single create command produces a reachable instance.
   `--external-ip-attachment` and no explicit network attachments — the
   server is placed on the default subnet with an auto-provisioned
   ExternalIP
+- [ ] A BaremetalInstance created without explicit network attachments has
+  exactly one resolved default network attachment
 - [ ] Default VirtualNetwork, Subnets (IPv4 + IPv6), and SecurityGroup
   exist and are READY before the tenant's first resource creation
 - [ ] Default resources appear in list views with a label identifying
@@ -177,6 +180,8 @@ where a single create command produces a reachable instance.
   returns an error and the resource is not persisted
 - [ ] A resource created without explicit network attachments shows the
   resolved default attachments when retrieved via the API
+- [ ] Creating a BaremetalInstance with more than one explicit network
+  attachment returns a single-NIC validation error
 
 ## 6. Dependencies
 
