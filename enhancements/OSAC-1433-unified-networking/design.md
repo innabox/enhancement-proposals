@@ -1859,6 +1859,10 @@ time. Creates ambiguous subnet state and complicates the tenant experience.
 
 ## Test Plan
 
+The executable, reviewable plan is maintained in
+[testplan.md](testplan.md). This section summarizes the shared coverage
+contract; service-specific plans inherit it and add their own cases.
+
 The shared test plan is the source of truth for the common networking
 contract. The Default Networking, VMaaS, CaaS, BMaaS, Catalog Items, and EVPN
 plans inherit these tests and add their service-specific scenarios. A service

@@ -925,6 +925,10 @@ Resolved: After `reconcileProvisioning` completes and the host has received a DH
 
 ## Test Plan
 
+The executable, reviewable plan is maintained in
+[testplan.md](testplan.md). It inherits the shared cases from the [Unified
+Networking test plan](../OSAC-1433-unified-networking/testplan.md).
+
 BMaaS tests must prove that the repeated API field still implements exactly one
 tenant-facing physical attachment, that only an eligible fabric port is
 selected, and that the two operators perform the provisioning-network handoff

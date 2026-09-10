@@ -1146,6 +1146,10 @@ Future constraints belong inside editable policy messages, for example integer r
 
 ## Test plan
 
+The executable networking-governance plan is maintained in
+[testplan.md](testplan.md). Resource-specific final validation remains owned
+by the Unified Networking, VMaaS, CaaS, and BMaaS test plans linked there.
+
 ### Unit tests
 
 Infrastructure: fulfillment-service Ginkgo suite (`ginkgo run -r internal`), which runs against a real ephemeral PostgreSQL container, the embedded OPA/Rego policy, and protovalidate, with a fake Kubernetes client for controllers. No kind cluster, Keycloak, or Envoy. Database delete-protection triggers are covered here as migration tests (`*_test.go` beside each `.up.sql`, via the `DescribeMigration` harness against the same real Postgres).

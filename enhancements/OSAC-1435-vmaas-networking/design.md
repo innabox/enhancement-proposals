@@ -575,6 +575,10 @@ Resolved: Return error, no resource persisted. Pool capacity checked synchronous
 
 ## Test Plan
 
+The executable, reviewable plan is maintained in
+[testplan.md](testplan.md). It inherits the shared cases from the [Unified
+Networking test plan](../OSAC-1433-unified-networking/testplan.md).
+
 VMaaS tests must prove the list-shaped API has exactly the currently
 supported single-interface behavior. The suite must test both the canonical
 `compute_network_attachments` field and the temporary deprecated field-14

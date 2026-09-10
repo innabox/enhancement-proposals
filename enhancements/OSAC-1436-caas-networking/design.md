@@ -664,6 +664,10 @@ Resolved: Kubeconfig API address uses the MetalLB VIP directly — workers are o
 
 ## Test Plan
 
+The executable, reviewable plan is maintained in
+[testplan.md](testplan.md). It inherits the shared cases from the [Unified
+Networking test plan](../OSAC-1433-unified-networking/testplan.md).
+
 CaaS tests must cover the singular Cluster attachment and the fact that one
 tenant network is shared by every node set while each node set may resolve a
 different physical fabric interface. The worker path is an integration with

@@ -1445,6 +1445,10 @@ Where is the authoritative MAC value? Does Netris VNet gateway MAC come from a p
 
 ## Test Plan
 
+The executable, reviewable plan is maintained in
+[testplan.md](testplan.md). It inherits the shared cases from the [Unified
+Networking test plan](../OSAC-1433-unified-networking/testplan.md).
+
 This is a phase-specific test plan. It verifies the currently supported
 `cudn_evpn` behavior and explicitly rejects or fails closed for Phase 1
 limitations. It does not turn Phase 2 capabilities, east-west networking, or

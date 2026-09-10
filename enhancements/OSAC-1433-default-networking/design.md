@@ -662,6 +662,10 @@ Resolved: Return error, no resource persisted.
 
 ## Test Plan
 
+The executable, reviewable plan is maintained in
+[testplan.md](testplan.md). It inherits the shared cases from the [Unified
+Networking test plan](../OSAC-1433-unified-networking/testplan.md).
+
 Default Networking is tested as both an onboarding workflow and a defaulting
 layer. It must not duplicate the shared resource contract from Unified
 Networking, but it must prove that onboarding creates the correct supported
