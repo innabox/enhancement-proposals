@@ -50,6 +50,9 @@ infrastructure, not additional hubs.
 > supported. The remainder of this document describes the desired-state
 > architecture.
 
+All BMaaS networking resources, attachments, and discovered addresses use IPv4
+only. IPv6 and dual-stack networking are not supported.
+
 ## Motivation
 
 Bare-metal servers require explicit switch port configuration to participate in the OSAC Networking API. Unlike VMs (which live inside an OVN overlay bridged to the fabric), BM servers connect directly to the physical fabric — the selected tenant NIC's switch port must be moved between network segments during the provisioning lifecycle.
@@ -253,7 +256,7 @@ Same as VMaaS/CaaS — the networking API is uniform.
      - If an attachment is provided, its `interface` references a valid interface name from the BareMetalInstanceType's network ports list
      - If an attachment's `interface` is omitted, it defaults to the first port with `role=fabric` from the BareMetalInstanceType
      - The single attachment is implicitly primary and supplies the default gateway
-   - If `auto_external_ip_attachment == true`: auto-selects ExternalIPPool (READY, most available capacity, matching IP family), creates ExternalIP (labeled `osac.openshift.io/auto-created: "true"` and `osac.openshift.io/auto-created-for: <baremetal-instance-id>`) + ExternalIPAttachment (labeled `osac.openshift.io/auto-created: "true"`) in the same DB transaction — both start in **Pending** state. The ExternalIPAttachment references the BaremetalInstance but does not yet have a DNAT target IP (the BM's IP is unknown until `reconcileNetworking` runs). Pool capacity is decremented atomically; if the pool is exhausted, the API call fails and no resources are persisted (including the BaremetalInstance). See [Unified Networking — Auto-provisioning lifecycle](/enhancements/OSAC-1433-unified-networking/design.md#external-access-same-for-all-resource-types) for the shared two-phase flow.
+   - If `auto_external_ip_attachment == true`: auto-selects an IPv4 ExternalIPPool (READY, most available capacity), creates ExternalIP (labeled `osac.openshift.io/auto-created: "true"` and `osac.openshift.io/auto-created-for: <baremetal-instance-id>`) + ExternalIPAttachment (labeled `osac.openshift.io/auto-created: "true"`) in the same DB transaction — both start in **Pending** state. The ExternalIPAttachment references the BaremetalInstance but does not yet have a DNAT target IP (the BM's IP is unknown until `reconcileNetworking` runs). Pool capacity is decremented atomically; if the pool is exhausted, the API call fails and no resources are persisted (including the BaremetalInstance). See [Unified Networking — Auto-provisioning lifecycle](/enhancements/OSAC-1433-unified-networking/design.md#external-access-same-for-all-resource-types) for the shared two-phase flow.
    - Creates BaremetalInstance CR with `network_attachments` in spec
 
 6. **bare-metal-fulfillment-operator BareMetalInstance controller:**
@@ -766,7 +769,8 @@ Resolved: After `reconcileProvisioning` completes and the host has received a DH
 
 - fulfillment-service: single-attachment validation (reject more than one attachment, accept the single attachment as implicit primary)
 - fulfillment-service: interface validation (reject interface not in BareMetalInstanceType, reject lifecycle interface)
-- fulfillment-service: auto ExternalIP pool selection (pick READY pool with most capacity, respect IP family)
+- fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
+- fulfillment-service: interface validation (reject interface not in BareMetalInstanceType, reject lifecycle interface)
 - bare-metal-fulfillment-operator: reconcileNetworking phase ordering (after inventory, before provisioning)
 - bare-metal-fulfillment-operator: one dispatcher call for the selected attachment (move_network_attachment with correct from/to network segment params, direction from deletionTimestamp)
 - bare-metal-fulfillment-operator: `buildSubnetMACMap` resolves subnetRef → MAC from the interface-macs annotation (single-NIC fallback when interface unset)

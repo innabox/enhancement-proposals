@@ -91,6 +91,11 @@ This section defines key terms used throughout this document.
   connectivity. In this design, VMs also participate in the fabric through
   a K8s manager that bridges the OVN overlay to the physical network.
 
+### Address-family scope
+
+All networking resources and traffic described by this PRD use IPv4 CIDRs.
+IPv6 and dual-stack networking are not supported.
+
 ## 1. Problem Statement
 
 The OSAC Networking API must serve as a foundational service across all three
@@ -225,6 +230,7 @@ the cluster's VIPs are discovered (see
 - Enable VMs, clusters, and bare-metal servers to coexist in the same VirtualNetwork
 - Work in air-gapped environments using data-center-routable IPs
 - Support one tenant network attachment for each bare-metal server, selected from the host type's physical interfaces
+- Provide IPv4-only networking; IPv6 and dual-stack networking are not supported
 
 ### 2.2 Success Metrics
 
@@ -336,12 +342,15 @@ DNAT target.
 
 ### 4.2 Non-Functional Requirements
 
-_No non-functional requirements were specified in the original document._
+- Networking resources, attachments, external IPs, and security rules use IPv4
+  only. IPv6 and dual-stack networking are not supported.
 
 ## 5. Acceptance Criteria
 
 ### Core Networking
 
+- [ ] VirtualNetworks, Subnets, ExternalIPs, and SecurityGroup rules accept and
+  provision IPv4 CIDRs only; IPv6 and dual-stack requests are rejected
 - [ ] Resources in different VirtualNetworks cannot communicate (full isolation)
 - [ ] Resources in the same Subnet are in the same L2 broadcast domain
 - [ ] Resources in different Subnets within the same VirtualNetwork can communicate via Layer 3 routing

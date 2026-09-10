@@ -38,6 +38,8 @@ workload targets for the K8s overlay.
 > connected deployments only; air-gapped deployments are not currently
 > supported. The remainder of this document describes the desired-state
 > architecture.
+All VM networking resources and attachments use IPv4 CIDRs only. IPv6 and
+dual-stack networking are not supported.
 
 ## Motivation
 
@@ -164,7 +166,7 @@ ComputeInstance already participates in the networking API. Today's flow:
 #### External Access (optional, auto-provisioned when `auto_external_ip_attachment=true`)
 
 8. **fulfillment-service creates ExternalIP and ExternalIPAttachment:**
-   - Auto-selects ExternalIPPool (READY, most available capacity, matching IP family)
+   - Auto-selects an IPv4 ExternalIPPool (READY, most available capacity)
    - Creates ExternalIP from pool, labeled `osac.openshift.io/auto-provisioned: "true"` and `osac.openshift.io/auto-provisioned-for: <compute-instance-id>`
    - Creates ExternalIPAttachment binding ExternalIP to VM's primary subnet IP, labeled `osac.openshift.io/auto-provisioned: "true"`
    - Both start in **Pending** state. The ExternalIPAttachment controller checks two preconditions before dispatching (requeues if either is not met):
@@ -406,7 +408,7 @@ Resolved: Return error, no resource persisted. Pool capacity checked synchronous
 - fulfillment-service: primary validation (reject >1 primary, accept single implicit primary, accept explicit primary)
 - fulfillment-service: dual-field validation (reject both old and new, convert old → new)
 - fulfillment-service: BM-only deployment validation (reject VM when no k8s_manager)
-- fulfillment-service: auto ExternalIP pool selection (pick READY pool with most capacity, respect IP family)
+- fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
 - osac-operator ComputeInstance controller: `PrimarySubnetRef()` resolution (explicit primary, implicit single-attachment)
 
 ### Integration Tests

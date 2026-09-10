@@ -26,6 +26,7 @@ CaaS networking provides tenant-controlled cluster node networking via VirtualNe
 This document is a per-service expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md). The unified EP defines the shared architecture (NetworkClass, dispatcher, infrastructure-agnostic subnets, resource hierarchy); this document defines how CaaS consumes that architecture.
 
 Cluster provisioning uses the OSAC Networking API for all networking lifecycle — tenants place clusters on their VirtualNetworks via `network_attachment`, the `BareMetalWorkerReconciler` creates on-demand `BareMetalInstance` objects via the BMaaS private gRPC API (BMaaS owns the fabric port move and IP assignment as part of BMI provisioning), and a VIP feedback loop enables auto-provisioned external access for cluster API and ingress endpoints. See [PRD](prd.md) for detailed requirements and [OSAC-2135](/enhancements/OSAC-2135-caas-bare-metal-worker-provisioning/design.md) for the full provisioning design.
+Cluster provisioning uses the OSAC Networking API for all networking lifecycle — tenants place clusters on their VirtualNetworks via `network_attachment`, the `BareMetalWorkerReconciler` creates on-demand `BareMetalInstance` objects via the BMaaS private gRPC API (BMaaS owns the fabric port move and IP assignment as part of BMI provisioning), and a VIP feedback loop enables auto-provisioned external access for cluster API and ingress endpoints. See [PRD](prd.md) for detailed requirements and [OSAC-2135](/enhancements/OSAC-2135-caas-bare-metal-worker-provisioning/design.md) for the full provisioning design.
 
 ## Deployment Topology
 
@@ -39,6 +40,8 @@ hubs.
 > connected deployments only; air-gapped deployments are not currently
 > supported. The remainder of this document describes the desired-state
 > architecture.
+All CaaS networking resources, endpoint addresses, and VIP allocation use
+IPv4 only. IPv6 and dual-stack networking are not supported.
 
 ## Motivation
 
@@ -546,6 +549,9 @@ Resolved: Kubeconfig API address uses the MetalLB VIP directly — workers are o
 - fulfillment-service: auto ExternalIP pool selection (pick READY pool with most capacity, respect IP family)
 - osac-operator BareMetalWorkerReconciler: BMI creation with enriched network_attachment
 - osac-operator BareMetalWorkerReconciler: Agent-to-BMI MAC correlation
+- fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
+- osac-operator ClusterOrder controller: agent selection logic
+- osac-operator ClusterOrder controller: network attachment resolution
 - osac-operator feedback controller: VIP sync to fulfillment-service
 
 ### Integration Tests

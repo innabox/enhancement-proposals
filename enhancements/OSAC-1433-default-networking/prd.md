@@ -28,6 +28,9 @@ where a single create command produces a reachable instance.
 - Auto-provisioned networking resources are visible, editable, and follow
   the same lifecycle as manually created ones
 
+All default networking resources use IPv4 CIDRs. IPv6 and dual-stack networking
+are not supported.
+
 ### 2.2 Non-Goals
 
 - Custom default configurations per tenant (all tenants in a deployment
@@ -82,19 +85,19 @@ where a single create command produces a reachable instance.
 #### Default Networking
 
 - **FR-1:** At tenant onboarding, the system provisions a default
-  VirtualNetwork, IPv4 Subnet, IPv6 Subnet, and SecurityGroup for the
-  tenant (dual-stack). The tenant transitions to READY only after all
+  VirtualNetwork, IPv4 Subnet, and SecurityGroup for the tenant. The tenant
+  transitions to READY only after all
   default networking resources are also READY. If default networking
   provisioning fails, the tenant remains in a non-READY state with a
   status condition describing the failure. The Cloud Provider Admin can
   inspect the failure and retry by deleting and re-creating the tenant.
   [User]
 - **FR-2:** The Cloud Infrastructure Admin configures default networking
-  parameters (IPv4 CIDR, IPv6 CIDR, SecurityGroup rules) on the
+  parameters (IPv4 CIDR and SecurityGroup rules) on the
   NetworkClass. Defaults are required — a NetworkClass without defaults
   is rejected at creation time. [User]
-- **FR-3:** All tenants receive the same default CIDR ranges (IPv4 and
-  IPv6) as configured on the NetworkClass. Tenants are isolated at the
+- **FR-3:** All tenants receive the same default IPv4 CIDR ranges as configured
+  on the NetworkClass. Tenants are isolated at the
   network level — the unified networking API provides VirtualNetworks
   with any IP subnet, and the system enforces isolation regardless of
   overlapping CIDRs between tenants. [User]
@@ -123,7 +126,7 @@ where a single create command produces a reachable instance.
   available ExternalIPPool with the most capacity, allocates an
   ExternalIP, and creates an ExternalIPAttachment binding it to the
   resource. The system selects the pool with the most available capacity
-  matching the requested IP family (defaulting to IPv4). When multiple
+  using IPv4. When multiple
   pools have equal capacity, selection is deterministic but unspecified.
   [User]
 - **FR-9:** Cluster supports `--external-ip-attachment`. When enabled,
@@ -165,7 +168,7 @@ where a single create command produces a reachable instance.
   ExternalIP
 - [ ] A BaremetalInstance created without explicit network attachments has
   exactly one resolved default network attachment
-- [ ] Default VirtualNetwork, Subnets (IPv4 + IPv6), and SecurityGroup
+- [ ] Default VirtualNetwork, IPv4 Subnet, and SecurityGroup
   exist and are READY before the tenant's first resource creation
 - [ ] Default resources appear in list views with a label identifying
   them as defaults
@@ -190,8 +193,8 @@ where a single create command produces a reachable instance.
   ExternalIPAttachment, NATGateway) defined in the
   [Unified Networking EP](/enhancements/OSAC-1433-unified-networking)
 - **OSAC-1712 (automatic pool selection)** — the auto ExternalIP pool
-  selection reuses the identical algorithm: pick the READY pool with the
-  most available capacity matching the IP family
+  selection reuses the identical algorithm: pick the READY IPv4 pool with the
+  most available capacity
 - **Tenant onboarding flow** — default resource creation hooks into the
   existing Tenant controller lifecycle
 - **osac-installer** — NetworkClass default configuration must be included

@@ -60,6 +60,9 @@ physical NIC is connected to one Subnet. A host type may describe multiple
 physical interfaces for inventory and other service workflows, but BMaaS does
 not support multi-NIC or multi-homed tenant attachments.
 
+All networking resources and manager integrations in this design use IPv4.
+IPv6 and dual-stack networking are not supported.
+
 For user stories, goals, and non-goals, see the
 [Requirements Document (PRD)](prd.md).
 
@@ -126,7 +129,7 @@ spec:
   k8sManager: cudn_localnet
 status:
   capabilities:
-    addressFamily: dualStack
+    addressFamily: ipv4
 ```
 
 **Neutron + CUDN (VMs and BM):**
@@ -166,21 +169,12 @@ operator computes the intersection of capabilities declared by the fabric
 manager and k8sManager ConfigMaps and populates `status.capabilities`
 automatically.
 
-If the provider needs to restrict a capability that the managers support
-(e.g., disable IPv6 in a deployment even though the fabric manager supports
-it), they can set `spec.disableCapabilities`:
-
-```yaml
-spec:
-  fabricManager: netris
-  k8sManager: cudn_localnet
-  disableCapabilities:
-    - ipv6
-```
+All networking managers and NetworkClasses expose IPv4-only behavior. IPv6 and
+dual-stack networking are not supported.
 
 | Capability | Type | Meaning |
 |-----------|------|---------|
-| `addressFamily` | enum | `ipv4`, `ipv6`, or `dualStack` |
+| `addressFamily` | enum | `ipv4` |
 | `dpuSupport` | bool | DPU-accelerated networking available |
 
 The set of capabilities is defined by the operator and is fixed — adding a
@@ -236,7 +230,7 @@ metadata:
 data:
   name: cudn_localnet
   description: "CUDN with LocalNet — bridges OVN overlay to physical fabric"
-  capabilities: "addressFamily:dualStack"
+  capabilities: "addressFamily:ipv4"
 ```
 
 The operator discovers managers by listing ConfigMaps with the appropriate
@@ -758,8 +752,7 @@ in the VN — VMs, BM servers, cluster nodes — since all are on the fabric.
 ```protobuf
 message VirtualNetworkSpec {
   string network_class = 1; // required, immutable
-  string ipv4_cidr = 2;     // optional, immutable
-  string ipv6_cidr = 3;     // optional, immutable
+  string ipv4_cidr = 2;     // required, immutable
 }
 ```
 

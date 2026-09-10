@@ -41,17 +41,17 @@ Pure consumer of the existing private `ExternalIPPools` service
 
 - **List page** (`ExternalIpPoolsListPage`, `pages/admin/`) at
   `/admin/infrastructure/external-ip-pools` — alongside Storage and Instance types in the
-  admin "Infrastructure" nav. Columns: **Name**, **IP family**, **CIDRs**,
+  admin "Infrastructure" nav. Columns: **Name**, **IPv4 CIDRs**,
   **Available / Total** (`status.available`/`status.total`), **State**
   (`ExternalIpPoolStatusLabel`). Row actions: **Edit**, **Delete**. A "Create pool" button
   routes to the create form.
 - **Create/update form** (`ExternalIpPoolFormPage`, one shared component for both
   `/admin/infrastructure/external-ip-pools/create` and
   `/admin/infrastructure/external-ip-pools/:id/edit`, Formik+Yup): **Name** (DNS label),
-  **IP family** (`IPv4`/`IPv6`), **CIDRs** (repeatable, ≥1, `FieldArray`). In edit mode,
-  IP family and CIDRs are immutable server-side and render disabled for reference — only
+  **IPv4 CIDRs** (repeatable, ≥1, `FieldArray`). In edit mode, CIDRs are immutable
+  server-side and render disabled for reference — only
   **Name** is editable. Create submits
-  `{ metadata: { name }, spec: { ipFamily, cidrs } }` via `useCreateExternalIPPool()`;
+  `{ metadata: { name }, spec: { ipFamily: "IPv4", cidrs } }` via `useCreateExternalIPPool()`;
   update submits via `useUpdateExternalIPPool()` with `lock=true`.
 - **Delete:** row action with confirmation, `useDeleteExternalIPPool()`.
 
@@ -61,9 +61,9 @@ Pure consumer of the existing private `ExternalIPPools` service
 
 - **List page** (`VirtualNetworksPage`) at `/networking/virtual-networks`. Columns:
   **Name**, **IPv4 CIDR**, **Subnets count**, **Status** (`VirtualNetworkStatusLabel`).
-- **Create form:** modal (`VirtualNetworkCreateModal`) with **Name**, **IPv4 CIDR**,
-  optional **IPv6 CIDR** — NetworkClass is assigned automatically, not exposed to
-  tenants. Via `useCreateVirtualNetwork()`.
+- **Create form:** modal (`VirtualNetworkCreateModal`) with **Name** and **IPv4 CIDR**.
+  IPv6 and dual-stack networking are not supported. NetworkClass is assigned
+  automatically, not exposed to tenants. Via `useCreateVirtualNetwork()`.
 - **Detail page** (`VirtualNetworkDetailPage`) at `/networking/virtual-networks/:id`,
   with tabs for **Subnets**, **Security Groups**, **Details**.
 - **Delete:** header action, `useDeleteVirtualNetwork()`; blocked if the VN has subnets
