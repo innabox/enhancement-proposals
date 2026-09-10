@@ -1249,6 +1249,101 @@ Infrastructure: osac-test-infra pytest against the full stack, fulfillment servi
 - Bare Metal `auto_external_ip_attachment` policy resolves through Catalog into the provisioned resource spec.
 - Regenerated UI, CLI, operator, AAP, and test-infra clients handle the new shapes. This is a cross-component compatibility concern spanning repos, not a single enforcement point.
 
+### Networking contract audit
+
+Catalog Items do not define a second networking API. These tests prove that
+Catalog resolution produces the same final network contract as direct resource
+creation, and that Catalog governance never becomes a way to mutate an
+already-created networking resource or to change unrelated Catalog metadata.
+
+#### Networking unit tests
+
+- Resolve absent, locked, editable, and editable-with-default networking
+  policies for Compute, Cluster, and Bare Metal resources.
+- Distinguish omitted attachment fields from explicitly empty repeated lists,
+  empty strings, explicit zero, and explicit `false` presence.
+- Verify the documented resolution order: tenant value, Catalog default,
+  Template default, then tenant default networking for still-missing fields.
+- Verify requiredness is evaluated after complete resolution, not before.
+- Compute policy: accept zero or one attachment; reject more than one and
+  reject explicit `primary: false`.
+- BM policy: accept zero or one attachment; reject more than one and reject
+  explicit `primary: false`.
+- Cluster policy: accept one singular attachment and reject repeated or
+  per-node attachment representations.
+- Verify a supplied Subnet or non-empty SecurityGroup list is preserved and
+  only missing fields receive tenant defaults.
+- Verify invalid explicit values are rejected rather than repaired by a
+  Catalog or tenant default.
+- Verify shared Catalog Items cannot lock or default tenant-local Subnet or
+  SecurityGroup references; tenant-owned items may reference resources in
+  their own scope.
+- Verify CaaS `fabric_interface` is derived from the BareMetalInstanceType
+  and cannot be Catalog-governed.
+- Verify `auto_external_ip_attachment` enables only the resource-specific
+  automatic flow; it cannot select an ExternalIP, pool, NATGateway, address,
+  or allocation strategy.
+- Verify resolved network fields are create-time-only. Catalog updates affect
+  later resources but never mutate an existing resource's network spec.
+- Verify Catalog Item metadata and non-network fields remain unchanged during
+  network policy validation and materialization.
+
+#### Networking integration tests
+
+Using the real Catalog policy engine, fulfillment-service, PostgreSQL,
+protovalidate, private/public handlers, and envtest/Kind CRDs:
+
+- Materialize each valid VM, Cluster, and BM network policy and compare the
+  persisted resolved network spec with the equivalent direct Create request.
+- Run the same invalid policy through public API, private API, REST gateway,
+  and direct CR fixtures; verify the same error class, field path, and no
+  partial resource.
+- Verify locked policy rejects conflicting tenant input, including conflicting
+  empty/non-empty list forms and explicit `false`.
+- Verify editable policy accepts tenant input and otherwise falls through to
+  Catalog, Template, and tenant defaults.
+- Verify an editable policy without a Catalog default invokes service default
+  networking only after Template resolution.
+- Verify reference existence, type, scope, readiness, same-VN, interface,
+  and cardinality checks are performed by the owning service after Catalog
+  resolution.
+- Verify a Catalog Item cannot bypass VMaaS, CaaS, or BMaaS update/patch/
+  replace immutability.
+- Verify Catalog Item Template changes, policy changes, or deletion do not
+  mutate already-materialized network fields.
+- Verify referential-integrity deletion guards for governed Subnet,
+  SecurityGroup, ExternalIPPool, and other network references.
+- Verify network-policy resolution does not modify Catalog metadata, resource
+  ownership, or unrelated Template parameters.
+
+#### Networking end-to-end tests
+
+Against the full supported service stack:
+
+- Create a ComputeInstance through a Catalog Item with zero/one attachment
+  policy and verify exactly one VM interface.
+- Create a Cluster through a Catalog Item and verify one shared attachment,
+  per-node-set derived physical interfaces, and no tenant-selected interface.
+- Create a BareMetalInstance through a Catalog Item and verify one physical
+  attachment, implicit primary behavior, and interface validation.
+- Verify locked and editable policies, tenant overrides, empty-list semantics,
+  and tenant-default fallthrough for all three services.
+- Verify Catalog-controlled auto external access follows each service's
+  normal ExternalIP lifecycle and does not permit arbitrary address selection.
+- Attempt multiple attachments, false primary, local references in a shared
+  item, CaaS physical-interface input, invalid readiness, and network-owned
+  updates; verify rejection and no partial infrastructure.
+- Update a Catalog Item after creating a resource and verify the existing
+  resource is unchanged while a subsequent resource uses the new policy.
+- Verify Catalog metadata is byte-for-byte unchanged except for the explicit
+  Catalog edit, and no networking reconciliation mutates it as a side effect.
+
+The Catalog networking audit is complete only when every supported policy
+shape has direct-versus-Catalog parity coverage and every unsupported policy
+shape has a negative test at authoring, materialization, or E2E level as
+appropriate. Network-specific implementation behavior remains owned by the
+Unified Networking and per-service test plans.
+
 ## Graduation criteria
 
 Graduation criteria will be defined when targeting a release. Expected stages: Dev Preview -> Tech Preview -> GA based on production deployment feedback.

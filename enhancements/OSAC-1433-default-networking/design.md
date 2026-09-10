@@ -662,39 +662,205 @@ Resolved: Return error, no resource persisted.
 
 ## Test Plan
 
-### Unit Tests
+Default Networking is tested as both an onboarding workflow and a defaulting
+layer. It must not duplicate the shared resource contract from Unified
+Networking, but it must prove that onboarding creates the correct supported
+default graph and that every service receives the documented defaulting
+behavior. The tests must cover both a combined-manager deployment and a
+K8s-only deployment, with NATGateway explicitly absent in the latter.
 
-- fulfillment-service: NetworkClass defaults validation (required canonical CIDR fields and conditional MetalLB prefix)
-- fulfillment-service: resource-specific network-field population (Compute `compute_network_attachments`, Cluster `network_attachment`, Bare Metal `network_attachments`) for omitted, empty, and partially specified attachments, preserving explicit values
-- fulfillment-service: Compute list cardinality validation (zero or one entry; reject more than one) and single-entry primary validation
-- fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
-- fulfillment-service: capacity exhaustion error (return error, resource not persisted)
-- fulfillment-service: default resource creation at tenant onboarding (VN, IPv4 Subnet, SG, and NATGateway with default label when supported)
-- fulfillment-service: DefaultNetworkingReady condition tracking (true when all supported defaults including the IPv4 Subnet and NATGateway when enabled are READY via feedback, false when any enabled default failed)
-- osac-operator resource controllers: auto-created resource cleanup (delete ExternalIPAttachment → ExternalIP on parent deletion)
+### Unit tests
 
-### Integration Tests
+#### NetworkClass and onboarding contract
 
-- E2E: create Tenant, verify default VN/IPv4 Subnet/SG and, when supported, NATGateway are created and labeled `osac.openshift.io/default: "true"`
-- E2E: create Tenant, default Subnet provisioning fails, verify Tenant remains non-READY with condition
-- E2E: create ComputeInstance without `compute_network_attachments`, verify defaults populated in spec
-- E2E: create BaremetalInstance without network_attachments, verify exactly one default attachment is populated in spec
-- E2E: create BaremetalInstance with more than one network attachment, verify the single-NIC validation error
-- E2E: create ComputeInstance with `--external-ip-attachment`, verify auto ExternalIP + ExternalIPAttachment created, DNAT rule functional
-- E2E: create Cluster with `--external-ip-attachment`, verify two ExternalIPs created BEFORE provisioning, cluster VIPs match
-- E2E: delete ComputeInstance with auto-created resources, verify ExternalIPAttachment and ExternalIP cleaned up
-- E2E: create ComputeInstance with explicit complete and partial `compute_network_attachments`, verify supplied fields are preserved and only missing fields are defaulted
-- E2E: create ComputeInstance with more than one `compute_network_attachments` entry, verify the single-interface validation error
-- E2E: create each resource type through a Catalog Item, verify locked and create-time editable network policy precedence relative to tenant defaults
-- E2E: create ComputeInstance with `--external-ip-attachment` when pool exhausted, verify error returned, resource not persisted
-- E2E: update or patch of a default network resource is rejected, and delete is blocked while dependencies exist
+- Accept a NetworkClass with required canonical default VN and Subnet CIDRs.
+- Reject missing `spec.defaults`, malformed CIDRs, IPv6/dual-stack CIDRs,
+  host bits, a default Subnet outside the default VN, and an invalid
+  conditional MetalLB prefix.
+- Accept a NetworkClass without `metallb_vip_prefix_length` when CaaS/MetalLB
+  capability is not advertised; reject it when that capability is advertised.
+- Accept a combined fabric-manager/K8s-manager default graph.
+- Accept a K8s-only default graph when its capabilities cover VN, Subnet, and
+  SecurityGroup creation.
+- Reject a NetworkClass with no manager or a capability set that cannot create
+  one of the required defaults.
+- Derive implementation strategy from manager capability; do not accept a
+  tenant-supplied strategy or NetworkClass selector.
 
-### Tricky Test Cases
+#### Default resource creation and identity
 
-- Tenant onboarding failure: default Subnet provisioning fails, verify Tenant non-READY, manual retry works
-- ExternalIPPool exhaustion: verify error returned, no resource created
-- Auto-provisioned resource cleanup failure: verify finalizer retry, eventual orphan cleanup
-- Cluster ExternalIP prerequisite ordering: verify ExternalIPs allocated BEFORE provisioning, template receives correct VIPs
+- Create exactly one default VirtualNetwork, one default IPv4 Subnet, and one
+  tenant fallback SecurityGroup for a newly onboarded tenant.
+- Create exactly one default NATGateway and its auto ExternalIP only when the
+  resolved NetworkClass advertises NATGateway support.
+- Verify default labels, tenant ownership, parent VN, canonical CIDRs,
+  address family, and immutable network fields.
+- Reject duplicate onboarding when an existing default graph has a mismatched
+  tenant, label, parent, CIDR, address family, or manager capability; never
+  silently adopt it.
+- Verify onboarding retries are idempotent when the existing graph exactly
+  matches the expected immutable identity and spec.
+- Verify the default fallback SecurityGroup may have zero tenant rules only
+  when it is system-created and the deployment-wide permit baseline exists.
+- Reject an empty tenant-created SecurityGroup as a default or ordinary
+  SecurityGroup.
+
+#### Readiness, failure, and recovery
+
+- Keep `DefaultNetworkingReady` false while each required default is Pending.
+- Keep it false when VN, Subnet, fallback SecurityGroup, or supported
+  NATGateway is Failed.
+- Set it true only after every capability-required default is Ready and the
+  feedback identity and parent match the tenant.
+- Verify an unsupported NATGateway in K8s-only mode is excluded from the
+  readiness set rather than reported as a failed or permanently Pending
+  default.
+- Verify a Ready resource from another tenant or another VN cannot satisfy
+  the condition.
+- Verify transient provisioning failures requeue and the documented provider
+  recovery path (repair and tenant recreation) produces a clean graph.
+- Verify a default that later loses readiness does not rewrite existing
+  immutable workload attachments; new default-dependent creates are blocked
+  until readiness returns.
+
+#### Workload default resolution
+
+For each ComputeInstance, Cluster, and BaremetalInstance input form, test:
+
+- attachments omitted → resolve all applicable defaults;
+- attachments explicitly empty → resolve all applicable defaults;
+- only Subnet supplied → preserve it and fill only SecurityGroups;
+- only SecurityGroups supplied → preserve them and fill only Subnet;
+- complete attachment supplied → preserve every supplied value;
+- invalid explicit value → reject it rather than repairing it with a default;
+- non-Ready default/reference → reject a direct workload create;
+- Catalog/Template value → resolve Catalog/Template precedence first, then
+  fill only still-missing fields from tenant defaults;
+- Compute more than one entry → reject;
+- Compute/BM explicit `primary: false` → reject;
+- BM omitted interface → resolve the first eligible fabric interface;
+- BM explicit interface → preserve and validate it;
+- Cluster per-node-set attachment or physical interface input → reject.
+
+Verify that all resolved references are Ready, same-scope, same-VirtualNetwork,
+and unique before the workload is persisted. Defaulting must never replace an
+explicit value that is invalid or incompatible.
+
+#### Auto ExternalIP behavior
+
+- Select a Ready IPv4 pool with the greatest capacity.
+- Use deterministic selection for equal-capacity pools.
+- Reject pool exhaustion and roll back the parent workload, ExternalIP,
+  ExternalIPAttachment, and capacity reservation.
+- Verify auto-created children are Pending initially and are not dispatched
+  until the ExternalIP and target workload prerequisites are Ready.
+- Verify the default transaction cannot create a child with an arbitrary
+  tenant-selected address or invalid target.
+
+### Integration tests
+
+The integration environment uses fulfillment-service with real PostgreSQL,
+the real validation/authorization stack, the real defaulting transaction, and
+an envtest/Kind API server with the operators. Managers and feedback are
+simulated with controllable asynchronous state.
+
+- Create a tenant in combined-manager mode and verify one complete default
+  graph is persisted and reconciled.
+- Create a tenant in K8s-only mode and verify VN, Subnet, and fallback SG are
+  created while NATGateway creation is never dispatched.
+- Restart the onboarding controller during each default resource phase and
+  verify no duplicate resources or jobs are produced.
+- Fail VN, Subnet, SecurityGroup, and supported NATGateway provisioning one at
+  a time; verify condition reason, non-Ready tenant status, requeue behavior,
+  and absence of false readiness.
+- Return a mismatched Ready feedback object and verify readiness is not
+  satisfied.
+- Verify default labels/ownership and database uniqueness constraints under
+  concurrent onboarding requests.
+- Verify capacity exhaustion during default NATGateway auto-allocation rolls
+  back all default records that belong to that transaction.
+- Exercise omitted, empty, partial, and complete workload attachments through
+  direct API, private API, and Catalog-based creation for all three services.
+- Verify only the missing attachment fields are defaulted and all explicit
+  values survive persistence and CR materialization.
+- Verify a direct tenant request cannot persist a workload referencing a
+  Pending default, while the internal onboarding graph can remain Pending and
+  requeue.
+- Verify default network resources cannot be updated or deleted while
+  dependents exist, and that a tenant cannot modify their network-owned
+  fields through a nested field mask.
+- Verify auto-created ExternalIPAttachment is cleaned before ExternalIP and
+  that transient finalizer failures retry without deleting the wrong object.
+- Verify Catalog metadata and unrelated fields remain unchanged when network
+  defaults are resolved.
+
+### End-to-end tests
+
+Run these against the supported connected single-hub environments:
+
+- Onboard a tenant with combined managers; verify default VN, IPv4 Subnet,
+  fallback SG, labels, readiness, and usable workload networking.
+- Onboard a tenant with K8s-only manager; verify successful default networking
+  without NATGateway and verify a tenant NATGateway create is rejected.
+- Create a VM with omitted and empty attachment input; verify one resolved
+  attachment, one interface, and connectivity.
+- Create a Cluster with omitted and empty attachment input; verify one shared
+  attachment is used by all node sets.
+- Create a BM instance with omitted and empty input; verify exactly one
+  default attachment and the first eligible fabric interface.
+- Repeat each service with partial and complete attachment input and verify
+  only missing fields are defaulted.
+- Create each service through a Catalog Item and verify Catalog/Template
+  precedence before tenant defaults.
+- Request auto external access for VM, Cluster, and BM; verify allocation,
+  readiness ordering, actual inbound connectivity, and cleanup.
+- Exhaust the relevant pool and verify the API rejects the request without a
+  workload, ExternalIP, attachment, or leaked capacity reservation.
+- Attempt network-owned update/patch/replace and delete a default resource
+  with dependents; verify rejection and no dataplane disruption.
+- Delete dependents first, then defaults, and verify complete backend cleanup.
+- Delete a tenant after its workload and auto-created children are gone and
+  verify tenant ownership cleanup removes the default VN, Subnet, fallback
+  SecurityGroup, and supported NATGateway in dependency order.
+
+### Unsupported and negative scenarios
+
+The following are mandatory rejection/fail-closed cases, not merely
+documentation notes:
+
+- missing/malformed/IPv6/dual-stack NetworkClass defaults;
+- K8s-only NATGateway creation;
+- empty tenant-created SecurityGroup used as a default;
+- duplicate or mismatched default graph;
+- workload creation while a required default is Pending or Failed;
+- more than one VM/BM attachment, explicit false primary, per-node Cluster
+  attachment, or tenant-selected BM physical interface in Cluster input;
+- invalid explicit attachment values silently replaced by defaults;
+- tenant-specific default CIDRs or extra tenant-specific default resource
+  graphs, because the current design has one deployment-wide NetworkClass
+  default graph;
+- automatic creation of additional VirtualNetworks or Subnets beyond the
+  initial default graph;
+- update, patch, replace, or field-mask changes to default networking fields;
+- parent/default deletion while reverse references exist;
+- arbitrary ExternalIP selection, pool exhaustion, duplicate auto children,
+  and unsafe partial allocation;
+- retroactive creation of defaults for existing tenants, unless explicitly
+  introduced by a future migration (the current design says no retroactive
+  defaults);
+- Catalog metadata mutation as a side effect of networking defaulting.
+
+The simplified-creation UI is deferred. The release test scope is therefore
+the API, private API, REST gateway, and CLI surfaces; it must not claim UI
+support or add UI behavior as an implicit default-networking requirement.
+
+### Coverage gate
+
+The release gate requires a matrix mapping every defaulting rule and every
+onboarding failure mode above to a unit or integration test. Each supported
+tenant-visible workflow must also have an E2E test. Every negative case must
+assert both the expected error/condition and the absence of an invalid or
+partially created resource.
 
 ## Graduation Criteria
 

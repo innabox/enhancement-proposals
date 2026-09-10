@@ -925,35 +925,191 @@ Resolved: After `reconcileProvisioning` completes and the host has received a DH
 
 ## Test Plan
 
-### Unit Tests
+BMaaS tests must prove that the repeated API field still implements exactly one
+tenant-facing physical attachment, that only an eligible fabric port is
+selected, and that the two operators perform the provisioning-network handoff
+in the documented order. Tests must distinguish tenant-visible validation
+from infrastructure failures that result in Pending/Failed status and retry.
 
-- fulfillment-service: single-attachment validation (reject more than one attachment, accept the single attachment as implicit primary)
-- fulfillment-service: Catalog `network_attachments` policy resolution (locked conflict, editable default, tenant default fallthrough, interface validation, and shared-item local-reference rejection)
-- fulfillment-service: interface validation (reject interface not in BareMetalInstanceType, reject lifecycle interface)
-- fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
-- fulfillment-service: interface validation (reject interface not in BareMetalInstanceType, reject lifecycle interface)
-- bare-metal-fulfillment-operator: reconcileNetworking phase ordering (after inventory, before provisioning)
-- bare-metal-fulfillment-operator: one dispatcher call for the selected attachment (move_network_attachment with correct from/to network segment params, direction from deletionTimestamp)
-- bare-metal-fulfillment-operator: `buildSubnetMACMap` resolves subnetRef → MAC from the interface-macs annotation (single-NIC fallback when interface unset)
+### Unit tests
 
-### Integration Tests
+#### Request shape, defaulting, and references
 
-- E2E: create BaremetalInstance with one attachment, verify the selected switch port is configured and the IP is allocated from the selected subnet
-- E2E: create BaremetalInstance through a Catalog Item with a locked or editable attachment, verify interface, implicit-primary, and tenant-default precedence
-- E2E: create BaremetalInstance with `--external-ip-attachment`, verify auto ExternalIP + ExternalIPAttachment created, DNAT rule functional
-- E2E: delete BaremetalInstance with auto-provisioned resources, verify ExternalIPAttachment and ExternalIP cleaned up
-- E2E: create BaremetalInstance with interface not in BareMetalInstanceType, verify error returned
-- E2E: create BaremetalInstance with a second attachment, verify the single-NIC validation error
-- E2E: verify IP discovery (`query_dhcp_lease` role queries fabric manager DHCP lease API after provisioning + reboot, matches the selected port MAC to assigned IP on tenant network, operator writes to CR status, feedback controller syncs to fulfillment-service, ExternalIPAttachment controller reads the single tenant IP)
-- E2E: verify the port move and reboot flow — create BMI provisions on the provisioning network, then moves the fabric port provisioning network → tenant network + reboots; delete BMI returns it tenant → provisioning network (confirm in fabric manager; a freed server can re-inspect with internet)
-- E2E: verify isolation-until-ready — before the move, a tenant vantage cannot reach the server; after move + reboot, it can, and the server is no longer on the provisioning network
+- Accept omitted and explicitly empty `network_attachments` input and resolve
+  exactly one default Subnet, SecurityGroup, and eligible fabric interface.
+- Accept one attachment with omitted or `primary: true`.
+- Reject a second entry before reference lookup, interface discovery,
+  capacity reservation, or persistence.
+- Reject explicit `primary: false`.
+- Fill only missing fields in a partial attachment and preserve supplied
+  Subnet, non-empty SecurityGroups, and interface.
+- Reject missing, Pending, Failed, wrong-scope, wrong-VirtualNetwork, IPv6,
+  and duplicate SecurityGroup references.
+- Reject an invalid explicit value rather than silently replacing it with a
+  default.
+- Verify all resolved references are Ready before a direct create is stored.
 
-### Tricky Test Cases
+#### BareMetalInstanceType and physical interface
 
-- BaremetalInstance with no usable interface, verify networking fails without exposing a provisioning-network address
-- ExternalIPPool exhaustion (verify error returned, no resource created)
-- Auto-provisioned resource cleanup failure (verify finalizer retry, eventual orphan cleanup)
-- IP address feedback latency (verify ExternalIPAttachment controller waits for IP to appear in status)
+- Accept a Ready/usable BareMetalInstanceType with one or more ordered
+  `fabric` ports.
+- When `interface` is omitted, select the first ordered `fabric` port.
+- When `interface` is supplied, preserve the named port and match by
+  canonical port name, not list position, label, MAC supplied by the tenant,
+  or arbitrary string.
+- Reject a missing, Pending, Failed, malformed, or unusable instance type.
+- Reject a type with no fabric port.
+- Reject an unknown interface, lifecycle port, management/storage port, or
+  unknown-role port.
+- Reject an inventory host that cannot provide the selected port; never select
+  a different port as fallback.
+- Verify a later BareMetalInstanceType edit or port reorder cannot move an
+  existing instance to another interface.
+- Verify only the selected fabric port is sent to the move operation.
+
+#### Provisioning, reboot, DHCP, and status
+
+- Verify phase ordering: inventory → provisioning → networking → reboot → IP
+  discovery → Ready.
+- Reject a move when the selected port has no known MAC or is a lifecycle
+  port.
+- Verify the provisioning-to-tenant move uses the selected port and correct
+  source/target network.
+- Verify the deterministic second reboot occurs when required for the tenant
+  DHCP lease.
+- Verify DHCP discovery matches the selected port MAC, with the documented
+  named-server fallback only where applicable.
+- Accept one canonical IPv4 lease in the resolved Subnet.
+- Reject a missing lease, non-IPv4 lease, wrong-subnet lease, wrong-MAC
+  lease, duplicate lease, or more-than-one status result.
+- Verify the operator writes at most one status entry and never mutates the
+  spec attachment from status.
+- Verify IP discovery failure keeps the instance non-Ready and backs off.
+- Verify ExternalIPAttachment waits for both the Allocated ExternalIP and the
+  discovered BM IP.
+
+#### Automatic ExternalIP and lifecycle
+
+- Select a Ready IPv4 pool with capacity and use deterministic tie-breaking.
+- Reject capacity/validation failure and roll back BM, ExternalIP,
+  ExternalIPAttachment, and capacity reservation.
+- Verify the auto-created target is the BM instance, endpoint is
+  `UNSPECIFIED`, and DNAT uses only the discovered selected-interface IP.
+- Reject arbitrary tenant-provided target IPs.
+- Verify update, patch, replace, and field-mask changes to every attachment
+  field and the auto-external switch.
+- Verify cleanup order: ExternalIPAttachment, ExternalIP, BM port return,
+  and finalizers.
+- Verify manually created external resources are not implicitly deleted.
+
+#### CaaS private handoff and Catalog
+
+- Accept a private CaaS request only when it contains exactly one enriched
+  attachment with Cluster Subnet/SecurityGroups and the immutable node-set
+  fabric interface.
+- Re-run all normal BMaaS checks for private callers.
+- Reject a private caller that injects a second attachment, invalid scope,
+  changed interface, lifecycle port, or missing instance type.
+- Verify Catalog locked/editable/default precedence and shared-item local
+  reference restrictions.
+
+### Integration tests
+
+Use fulfillment-service with real PostgreSQL and validation policy, the
+bare-metal-fulfillment-operator and osac-operator with an envtest/Kind API
+server, fake Ironic/Metal3 inventory, fake dispatcher/AAP jobs, and a fake
+fabric DHCP/IPAM API. The fakes must expose controllable port, reboot, lease,
+failure, retry, and deletion states.
+
+The BMaaS E2E environment must provide the deployment-owned provisioning
+network, DHCP/gateway/SNAT, initial per-server provisioning-network attach,
+Ironic/Metal3 inventory, BMC access, and interface-MAC annotations before the
+test begins. Creating that provisioning network is explicitly outside this
+operator design; the test must verify the operator consumes the prerequisite
+and does not claim ownership of its creation.
+
+- Exercise direct, private CaaS, REST, and Catalog-based BM creates with the
+  same valid and invalid network inputs.
+- Verify `mutateBMI` copies the resolved attachment and does not introduce a
+  second entry or lose the resolved interface.
+- Verify CRD/CEL and controller validation reject multiple entries, false
+  primary, lifecycle interface, and immutable mutations.
+- Verify inventory allocation and interface-MAC annotation are available
+  before `move_network_attachment` is dispatched.
+- Verify one move job is issued with the correct logical interface and
+  direction; verify unrelated ports are untouched.
+- Verify network phase waits for inventory/provisioning and reboot phase waits
+  for the move to finish.
+- Verify the second reboot and DHCP lease query occur in order and the
+  feedback controller syncs exactly one status IP.
+- Inject no lease, wrong-MAC lease, wrong-subnet lease, delayed lease,
+  dispatcher failure, BMC failure, controller restart, and feedback RPC
+  failure; verify non-Ready state, retry, and no false tenant IP.
+- Verify CaaS worker deletion waits for BMaaS deletion and port return.
+- Verify auto ExternalIP two-phase activation and complete cleanup after
+  parent deletion, including transient finalizer failure.
+- Verify pool exhaustion and validation failure leave no BM, IP, attachment,
+  database reservation, or backend job.
+- Verify dependency guards prevent Subnet, ExternalIP, and ExternalIPPool
+  deletion while BM references remain.
+
+### End-to-end tests — supported behavior
+
+In the supported connected single-hub BMaaS environment:
+
+- Create a BM instance with one explicit attachment and verify the selected
+  switch port is moved to the tenant network, the host receives a DHCP IP,
+  status is populated, and tenant connectivity works.
+- Create with omitted and empty attachments and verify exactly one default
+  attachment and first eligible fabric interface.
+- Create with partial attachments and verify only missing fields are
+  defaulted.
+- Create through Catalog Item locked/editable policies and verify interface,
+  implicit-primary, and tenant-default precedence.
+- Verify isolation until the port move and reboot: the tenant cannot reach the
+  host while it remains on the provisioning network; reachability begins only
+  after tenant handoff.
+- Verify deletion powers off the host before moving the port back, returns the
+  port to the provisioning network, and permits subsequent inspection.
+- Verify auto ExternalIP allocation, delayed DNAT until DHCP discovery, actual
+  inbound connectivity, and cleanup.
+- Verify a private CaaS worker follows the same one-attachment and port-move
+  flow.
+- Restart either operator during each phase and verify eventual completion
+  without duplicate moves, reboots, leases, or status entries.
+
+### End-to-end tests — unsupported behavior
+
+- More than one attachment, explicit `primary: false`, or a second status
+  entry is rejected.
+- Unknown, lifecycle, management, storage, or unavailable interface is
+  rejected; omitted interface never falls back to an arbitrary port.
+- Missing/NotReady instance type, missing fabric port, missing MAC, invalid
+  scope, cross-VirtualNetwork reference, and non-Ready network resources are
+  rejected or remain non-Ready as specified.
+- A tenant cannot choose a MAC, DHCP address, static host network, alternate
+  IPAM, or provisioning-network interface.
+- An in-place re-provision handoff reset after a resource has reached Ready is
+  not supported by this design; the test must not treat a config-version
+  change as a supported way to move a Ready server back through the tenant
+  handoff.
+- An invalid lease cannot make the BM Ready or activate DNAT.
+- A private CaaS caller cannot bypass BMaaS validation or add a second
+  attachment.
+- Update, patch, replace, or field-mask changes to all network-owned fields
+  are rejected; delete/recreate is required.
+- ExternalIP pool exhaustion leaves no BM or child resources.
+- VM-only operations such as KubeVirt interface placement and
+  `move_network_attachment` for a VM are not accepted by BMaaS.
+
+### Coverage gate
+
+Every rule in BMaaS Server Validation, the IP discovery lease contract, the
+two-operator phase ordering, private CaaS handoff, and Catalog interaction
+must map to a unit or integration test. Every supported BM lifecycle must
+have an E2E case, including isolation and cleanup, and every user-visible
+unsupported interface, cardinality, update, or IP behavior must have an E2E
+rejection/fail-closed case.
 
 ## Long-Term Evolution (The Reboot is the Seam)
 
