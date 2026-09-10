@@ -3,20 +3,19 @@ title: cudn-evpn-k8s-manager-phase-1-networking
 authors:
   - Benny Kopilov
 creation-date: 2026-09-03
-last-updated: 2026-09-03
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-4291
 prd:
   - prd.md
 see-also:
-  - "/enhancements/OSAC-1433-unified-networking-architecture"
-  - "/enhancements/OSAC-1717-ovn-kubernetes-evpn-spike"
+  - "/enhancements/OSAC-1433-unified-networking"
   - "/enhancements/OSAC-1435-vmaas-networking"
   - "/enhancements/OSAC-1436-caas-networking"
   - "/enhancements/OSAC-1437-bmaas-networking"
   - "/enhancements/OSAC-1433-default-networking"
-  - "/enhancements/OSAC-2135-caas-bm-worker-provisioning"
-  - "/enhancements/OSAC-1382-multi-fabric-east-west"
+  - "/enhancements/OSAC-2135-caas-bare-metal-worker-provisioning"
+  - "/enhancements/OSAC-1382-multi-fabric-east-west-networking"
 replaces:
   - "N/A"
 superseded-by:
@@ -56,9 +55,9 @@ OSAC's NetworkClass dispatcher already supports dual-manager provisioning (fabri
 - **Single-subnet-for-VMs constraint:**
   - Only single-subnet VirtualNetworks support VMs (CUDN provisioning)
   - First Subnet gets CUDN immediately (on Subnet provisioning, not VM creation)
-  - CUDN persists when adding subnets, but VMs blocked in all subnets
-  - API validation: Block second subnet creation if first has VMs (preserves VM topology)
-  - VMaaS validation: Block VM creation if subnet count > 1 (enforces single-subnet constraint)
+  - An additional Subnet is allowed only while the VirtualNetwork has no VMs and is fabric-only
+  - API validation blocks additional Subnet creation once any VM exists (preserves VM topology)
+  - VMaaS validation blocks VM creation when subnet count is greater than one
 - K8s manager playbook creates CUDN as Kubernetes-native resource (no external API calls)
 - FRRConfiguration for BGP underlay peering is installation prerequisite (auto-updated by OVN-Kubernetes, not by k8s manager)
 - Installation prerequisites documented for Cloud Infrastructure Admin
@@ -76,7 +75,7 @@ OSAC's NetworkClass dispatcher already supports dual-manager provisioning (fabri
 
 **Central Design Statement:**
 
-Phase 1 extends an existing Netris VPC and its VNets into OpenShift. **Only single-subnet VirtualNetworks support VMs.** The first Subnet gets a CUDN immediately (on provisioning, not VM creation). If additional Subnets are added, the CUDN persists but VMaaS blocks VMs in all Subnets. Multi-subnet VirtualNetworks are fabric-only until secondary CUDN/multi-NIC support is available.
+Phase 1 extends an existing Netris VPC and its VNets into OpenShift. **Only single-subnet VirtualNetworks support VMs.** The first Subnet gets a CUDN immediately (on provisioning, not VM creation). Additional Subnets may be added while no VMs exist; they are fabric-only, the first CUDN persists, and VMaaS blocks VMs in all Subnets. Once VMs exist, the API rejects additional Subnets. Multi-subnet VirtualNetworks are fabric-only until secondary CUDN/multi-NIC support is available.
 
 This design introduces a new k8s manager (`cudn_evpn`) registered via osac-installer ConfigMap, used when a NetworkClass declares `k8s_manager: "cudn_evpn"`.
 
@@ -148,8 +147,8 @@ sequenceDiagram
     participant FRR as FRR Operator
 
     Tenant->>API: Create Subnet (IPv4 CIDR)
-    API->>API: Validate single-subnet constraint
-    Note over API: Check NetworkClass k8s_manager,<br/>reject if second subnet
+    API->>API: Validate VM topology constraint
+    Note over API: Check NetworkClass k8s_manager,<br/>reject second subnet if VMs exist
     API-->>Tenant: 201 Created
 
     Controller->>Controller: Dispatch to fabric + k8s managers
@@ -279,7 +278,7 @@ func (s *SubnetServer) Create(ctx context.Context, req *v1.CreateSubnetRequest) 
     }
 
     // Enforce single-subnet-with-VMs constraint for cudn_evpn
-    k8sManager := ncResp.GetNetworkClass().GetKubernetesManager()
+    k8sManager := ncResp.GetNetworkClass().GetK8sManager()
     if k8sManager == "cudn_evpn" {
         // List existing Subnets under this VirtualNetwork
         listResp, err := s.List(ctx, &v1.ListSubnetsRequest{
@@ -346,7 +345,7 @@ VMaaS enforces subnet count validation before allowing VM placement in EVPN-brid
 func (r *ComputeInstanceReconciler) validateSubnetForVM(ctx context.Context, subnet *osacv1.Subnet) error {
     // Check if subnet has cudn_evpn k8s manager
     networkClass := getNetworkClass(ctx, subnet)
-    if networkClass.Spec.KubernetesManager != "cudn_evpn" {
+    if networkClass.Spec.K8sManager != "cudn_evpn" {
         // Not EVPN-bridged, use regular placement logic
         return nil
     }
@@ -563,7 +562,7 @@ func (r *SubnetReconciler) shouldSkipK8sManager(ctx context.Context, subnet *osa
     // Auto-detect: count total Subnets under this VirtualNetwork
     // Phase 1 limitation: only single-subnet VirtualNetworks support VMs (CUDN provisioning)
     // - First subnet (alone) → CUDN provisioned
-    // - Second+ subnets → no CUDN provisioned (fabric-only)
+    // - Second+ subnets → no new CUDN provisioned (fabric-only)
     var subnetList osacv1.SubnetList
     if err := r.List(ctx, &subnetList, client.MatchingLabels{
         "osac.openshift.io/virtual-network": subnet.Spec.VirtualNetwork,
@@ -1091,16 +1090,18 @@ metadata:
 data:
   name: cudn_evpn  # Field name 'name' per OSAC-1433 schema (not 'manager')
   description: "OVN-Kubernetes CUDN with EVPN transport for VM-to-fabric bridging (IPv4 only)"
-  capabilities: "supports_ipv4:true,supports_ipv6:false,single_subnet_per_vn:true"  # Comma-separated string per OSAC-1433
+  capabilities: "supports_ipv4:true,supports_ipv6:false,single_subnet_for_vms:true"  # Comma-separated string per OSAC-1433
   # template_role field removed - not in OSAC-1433 spec, dispatcher resolves role name from k8s_manager field
 ```
 
 **Capability Fields:**
 - `supports_ipv4:true` — IPv4 address family supported
 - `supports_ipv6:false` — IPv6 not supported in Phase 1
-- `single_subnet_per_vn:true` — NEW capability: enforces single-subnet-per-VirtualNetwork constraint (checked by fulfillment-service validation)
+- `single_subnet_for_vms:true` — NEW capability: permits at most one VM-capable Subnet per VirtualNetwork; additional Subnets are fabric-only while no VMs exist
 
-The `single_subnet_per_vn` capability is checked by fulfillment-service Subnet validation (see Subnet Validation section above) to make the constraint pluggable for future k8s managers.
+The `single_subnet_for_vms` capability is checked by fulfillment-service Subnet
+validation (see Subnet Validation section above) to make the VM topology
+constraint pluggable for future k8s managers.
 ```
 
 **RBAC:**
@@ -1364,7 +1365,7 @@ Where is the authoritative MAC value? Does Netris VNet gateway MAC come from a p
 
 - `internal/controller/subnet_controller_test.go`:
   - Auto-detection (single subnet): provisions fabric + k8s manager (CUDN created)
-  - Auto-detection (multiple subnets): all subnets provision fabric-only (no CUDN for any)
+  - Auto-detection (multiple subnets): second+ subnets provision fabric-only; the first CUDN persists
   - Auto-detection: subnet count check determines skip (count > 1 → skip k8s manager)
   - Explicit skip annotation: subnet provisions fabric-only even if single subnet
   - Sequential provisioning: fabric job runs first, k8s job waits for fabric completion

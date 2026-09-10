@@ -246,7 +246,7 @@ the cluster's VIPs are discovered (see
 - Support pluggable networking backends that can be added without API changes
 - Enable VMs, clusters, and bare-metal servers to coexist in the same VirtualNetwork
 - Work in air-gapped environments using data-center-routable IPs
-- Support one tenant network attachment for each bare-metal server, selected from the host type's physical interfaces
+- Support one tenant network attachment for each bare-metal server, selected from the BareMetalInstanceType's physical network ports
 - Provide IPv4-only networking; IPv6 and dual-stack networking are not supported
 
 ### 2.2 Success Metrics
@@ -364,10 +364,10 @@ least one explicit allow/deny rule. The most-specific matching rule wins.
 
 #### FR-7: Single network attachment for bare metal (R7)
 
-Bare-metal host types may expose multiple physical interfaces. The
+BareMetalInstanceTypes may expose multiple physical network ports. The
 `BaremetalInstance.network_attachments` API field remains repeated for
 compatibility, but accepts at most one tenant attachment, selected from the
-interface descriptions provided by the template. The selected attachment
+network ports provided by the BareMetalInstanceType. The selected attachment
 supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 
 ### 4.2 Non-Functional Requirements
@@ -434,8 +434,8 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 
 ### Resource-Specific (Bare Metal)
 
-- [ ] Host types describe available interfaces (name, role, description) for bare-metal servers
-- [ ] Bare-metal network attachments include an optional interface reference that identifies a named interface from the host type
+- [ ] BareMetalInstanceTypes describe available network ports (name, role, type, speed) for bare-metal servers
+- [ ] Bare-metal network attachments include an optional interface reference that identifies a named port from the BareMetalInstanceType
 - [ ] Bare-metal servers accept at most one `network_attachments` entry, using one valid physical interface
 - [ ] All referenced subnets must belong to the same VirtualNetwork
 

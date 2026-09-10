@@ -4,7 +4,7 @@
 |-------------|---------|
 | Author(s)   | Benny Kopilov |
 | Jira        | https://redhat.atlassian.net/browse/OSAC-4291 |
-| Date        | 2026-08-30 |
+| Date        | 2026-09-10 |
 
 ## Problem Statement
 
@@ -20,7 +20,7 @@ The OVN EVPN spike (OSAC-1717) validated the technical approach: VMs can join th
 - **Fabric-to-k8s manager data dependency** — subnet provisioning must ensure the fabric manager completes and provides network segment identifiers before the k8s manager begins, using a manager-agnostic interface [Clarify: R1.Q3, R2.Q5, D7] [User]
 - **Automatic overlay network provisioning** on hosting clusters that bridges VMs to the physical fabric when a VirtualNetwork/Subnet is created [Clarify: R2.Q1]
 - **VM-to-fabric connectivity** — VMs are discoverable and directly reachable from bare-metal servers on the physical fabric (both L2 same-subnet and L3 cross-subnet scenarios)
-- **Single-subnet-per-VirtualNetwork constraint for this k8s manager** — when a VirtualNetwork uses a NetworkClass with this k8s manager, the system rejects additional subnet creation with a clear error [Clarify: R1.Q4, D4]
+- **Single-subnet-for-VMs constraint for this k8s manager** — the first Subnet receives the CUDN; additional Subnets are allowed only while no VMs exist and are fabric-only, while additional Subnet creation is rejected once VMs exist. VM creation is blocked whenever the VirtualNetwork has multiple Subnets [Clarify: R1.Q4, D4]
 - **Non-conflicting IP address assignment** — VMs receive IP addresses that do not conflict with fabric DHCP allocations [Clarify: R1.Q5]
 - **Installation prerequisites documentation** — Cloud Infrastructure Admin must complete documented infrastructure prerequisites to enable physical fabric connectivity before creating the first VirtualNetwork [Clarify: R2.Q2, R2.Q3, D6] [User]
 - **Diagnostic tooling documentation** — documented tools for Cloud Infrastructure Admins to verify network segment state and troubleshoot connectivity issues [Clarify: R3.Q2]
@@ -64,7 +64,7 @@ The following are out of scope for Phase 1:
 
 - As a Tenant Admin or Tenant User, I want VMs I provision on fabric-bridged subnets to be reachable from bare-metal servers, so that my workloads can span VMs and physical hosts. [User]
 
-- As a Tenant Admin or Tenant User, I want the system to reject my second Subnet creation attempt under the same VirtualNetwork with a clear error message, so that I understand the constraint and can structure my networks accordingly. [Clarify: R1.Q4, D4]
+- As a Tenant Admin or Tenant User, I want the system to reject a second Subnet creation attempt under a VirtualNetwork that already has VMs, with a clear error message, so that I understand the Phase 1 topology constraint. [Clarify: R1.Q4, D4]
 
 ## Assumptions
 
@@ -87,7 +87,7 @@ The following are out of scope for Phase 1:
 - [ ] VMs deployed on the subnet receive IP addresses that do not conflict with Netris DHCP allocations
 - [ ] VMs are discoverable and directly reachable from bare-metal servers on the physical fabric (both L2 same-subnet and L3 different-subnet scenarios)
 - [ ] FRR diagnostic commands show correct VNI state on OCP workers
-- [ ] Creating a second Subnet under the same VirtualNetwork returns a validation error message referencing OVN Connectors limitation
+- [ ] Creating a second Subnet under a VirtualNetwork with existing VMs returns a validation error explaining the Phase 1 topology limitation
 
 **Non-Functional:**
 - [ ] Automated integration test in CI verifies end-to-end flow: subnet creation → dual-dispatch provisioning → VM placement → fabric reachability

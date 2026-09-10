@@ -21,8 +21,8 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - Network attachments are optional — when omitted or empty, the system
   attaches the server to the tenant's default subnet and security group; when
   one field is missing, only that field is defaulted
-- Host types expose available physical network interfaces through the API (name, role, description) for bare-metal servers
-- Network connectivity for the single attachment is established before bare-metal OS provisioning begins
+- BareMetalInstanceTypes expose available physical network ports through the API (name, role, type, speed) for bare-metal servers
+- BMaaS provisions the host on a provisioning network and establishes the tenant attachment after OS provisioning, before the server becomes Ready
 - External IP attachments support bare-metal servers as a target type
 - The system uses a distinct configuration parameter for network automation backend selection, separate from the networking resource hierarchy
 
@@ -45,7 +45,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 ### Tenant User Stories
 
 - As a Tenant User, I want to create a bare-metal server with one explicit network attachment so that I can connect one physical interface to one subnet
-- As a Tenant User, I want to see which physical network interfaces are available on a host type so that I can select the one interface used for my tenant network
+- As a Tenant User, I want to see which physical network ports are available on a BareMetalInstanceType so that I can select the one interface used for my tenant network
 - As a Tenant User, I want to create a bare-metal server with `--external-ip-attachment` and have it externally reachable in a single API call, without manually creating external IP and attachment resources
 - As a Tenant User, I want auto-provisioned external IPs to be automatically cleaned up when I delete the server, so that I do not accumulate orphaned resources
 - As a Tenant User, I want network interface validation when creating the attachment so that I get a clear error if I specify an interface that doesn't exist
@@ -56,7 +56,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 ### Cloud Infrastructure Admin Stories
 
-- As a Cloud Infrastructure Admin, I want to define available physical interfaces for each host type (name, role, description) so that tenants can discover and select the correct interface
+- As a Cloud Infrastructure Admin, I want to define available physical ports in each BareMetalInstanceType (name, role, type, speed) so that tenants can discover and select the correct interface
 
 ### Cloud Provider Admin Stories
 
@@ -70,13 +70,13 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 - **FR-1:** Tenants can specify the repeated `network_attachments` field when creating a bare-metal server, but validation accepts at most one entry. The entry identifies a subnet, security groups, and which physical interface to use (optional). The complete list and every entry field are immutable after creation; the single entry is implicitly the default gateway. [User]
 
-#### Host Type Interface Discovery
+#### BareMetalInstanceType Network Port Discovery
 
-- **FR-2:** The host type API exposes available physical network interfaces for bare-metal host types. Each interface includes a name (e.g., "data-0"), role (e.g., "fabric", "management", "storage"), and description (e.g., "100GbE fabric interface"). VM host types do not expose interface lists. Interfaces are ordered; when multiple interfaces share the same role, the first in the list is the default for that role. [User]
+- **FR-2:** The BareMetalInstanceType API exposes available physical network ports. Each port includes a name (e.g., "data-0"), role (e.g., "fabric", "management", "storage"), type, and speed. Ports are ordered; when multiple ports share the same role, the first in the list is the default for that role. [User]
 
 #### Interface Validation
 
-- **FR-3:** The system validates that the physical interface specified in the attachment exists in the host type's interface list. A request containing more than one attachment is rejected. [User]
+- **FR-3:** The system validates that the physical interface specified in the attachment exists in the BareMetalInstanceType's `network_ports` list. A request containing more than one attachment is rejected. [User]
 
 #### Default Gateway
 
@@ -86,9 +86,9 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 - **FR-5:** Network attachments are optional when creating a bare-metal server.
   When omitted or empty, the system attaches the server to the tenant's
-  default subnet and default security group, using the host type's default
-  interface. When one field is missing from a supplied attachment, only that
-  field is defaulted. If the host type has no default interface, creating a
+  default subnet and default security group, using the BareMetalInstanceType's
+  first `fabric` port. When one field is missing from a supplied attachment,
+  only that field is defaulted. If the profile has no fabric port, creating a
   server without an explicit interface fails with a clear error. The resolved
   attachment is stored with the server so it is self-describing after
   creation. [User]
@@ -99,7 +99,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Network Connectivity Configuration
 
-- **FR-7:** Network connectivity for the single attachment is established before bare-metal OS provisioning begins. The system configures the selected interface-to-subnet mapping. After the server boots, it receives an IP address on the configured subnet. [User]
+- **FR-7:** BMaaS provisions the server on the deployment provisioning network, then moves the selected fabric port to the tenant subnet after OS provisioning, reboots the server, and discovers its tenant-network IP before the server becomes Ready. [User]
 
 #### IP Address Visibility
 
@@ -129,13 +129,13 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 ## 5. Acceptance Criteria
 
-- [ ] A Tenant User can create a bare-metal server with one explicit network attachment specifying a physical interface from the host type
+- [ ] A Tenant User can create a bare-metal server with one explicit network attachment specifying a physical interface from the BareMetalInstanceType
 - [ ] A Tenant User can create a bare-metal server with `--external-ip-attachment` and no explicit network attachments — the server is created on the default subnet with an auto-provisioned external IP for inbound access
-- [ ] A bare-metal server with one network attachment is provisioned with connectivity configured for the selected interface, which provides the default gateway
+- [ ] A bare-metal server with one network attachment is provisioned on the provisioning network, then handed off to the tenant subnet through the selected interface, which provides the default gateway
 - [ ] Auto-created external IP and external IP attachment are labeled as auto-provisioned and visible in list views
 - [ ] Deleting a bare-metal server with auto-provisioned external IP causes the auto-created external IP and external IP attachment to be cleaned up automatically
-- [ ] Host type API returns structured physical network interface list for bare-metal host types (name, role, description)
-- [ ] Creating a bare-metal server with an invalid interface (not in host type's list) returns an error
+- [ ] BareMetalInstanceType API returns structured network port data (name, role, type, speed)
+- [ ] Creating a bare-metal server with an invalid interface (not in the BareMetalInstanceType's `network_ports` list) returns an error
 - [ ] Creating a bare-metal server with more than one network attachment returns a single-NIC validation error
 - [ ] Bare-metal server attachment IP is visible in status after network connectivity is configured
 - [ ] External IP attachment with bare-metal server target routes inbound traffic to the server's single attachment IP
@@ -146,7 +146,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - The tenant has default networking resources (virtual network, subnet, security group) pre-created at onboarding (see Default Networking PRD). If defaults are not configured, creating a server without explicit network attachments fails with a clear error.
 - The NetworkClass has at least one manager configured that supports BMaaS
   networking; the implementation strategy is resolved by the provider.
-- The host type for the bare-metal template has a populated physical network interface list. If the list is empty, creating a server with explicit network attachments fails with a clear error.
+- The BareMetalInstanceType for the bare-metal template has at least one `fabric` port. If it does not, creating a server with explicit network attachments fails with a clear error.
 - Out-of-band provisioning interfaces (PXE boot, BMC) are reserved for system use and are NOT tenant-attachable (should not appear in network attachments).
 
 ## 7. Dependencies
@@ -192,6 +192,6 @@ Resolved: Explicitly excluded in validation. Lifecycle and BMC interfaces are no
 
 Resolved: Return error, no resource persisted.
 
-### ~~9.3 What is the interface selection logic when network attachments are omitted and the host type has multiple primary traffic interfaces?~~ — Resolved
+### ~~9.3 What is the interface selection logic when network attachments are omitted and the BareMetalInstanceType has multiple fabric ports?~~ — Resolved
 
-Resolved: First in the list. Interfaces are ordered in the HostType; when multiple interfaces share the same role, the first one is the default. This is already defined in FR-2.
+Resolved: First in the list. Network ports are ordered in the BareMetalInstanceType; when multiple ports share the same role, the first one is the default. This is already defined in FR-2.

@@ -28,8 +28,9 @@
 1. Apply osac-installer Helm chart with cudn_evpn manager enabled
 2. Verify ConfigMap `k8s-manager-cudn-evpn` exists in osac namespace
 3. Verify ConfigMap data.manager = "cudn_evpn"
-4. Verify ConfigMap data.capabilities includes "supports_ipv4: true"
-5. Verify ConfigMap data.capabilities includes "supports_ipv6: false"
+4. Verify ConfigMap data.capabilities includes "supports_ipv4:true"
+5. Verify ConfigMap data.capabilities includes "supports_ipv6:false"
+6. Verify ConfigMap data.capabilities includes "single_subnet_for_vms:true"
 
 ##### Expected Results
 
@@ -179,9 +180,9 @@
 - FRR advertises Type-5 EVPN route for 200.200.1.0/24 prefix
 - Traffic encapsulated with L3 VNI (ipVRF), not L2 VNI (macVRF)
 
-### R5: Single-subnet-per-VirtualNetwork constraint for this k8s manager
+### R5: VM topology constraint for this k8s manager
 
-#### TC-R5-01: Second subnet creation rejected for cudn_evpn NetworkClass
+#### TC-R5-01: Second subnet creation rejected when VMs exist
 
 | Interface Change | Priority | Automation |
 |-----------------|----------|------------|
@@ -192,6 +193,7 @@
 - NetworkClass with k8s_manager="cudn_evpn"
 - VirtualNetwork created with this NetworkClass
 - One Subnet already exists under this VirtualNetwork
+- At least one VM is running in the existing Subnet
 
 ##### Steps
 
@@ -202,9 +204,8 @@
 
 - API returns HTTP 400 Bad Request
 - Response code = `FailedPrecondition`
-- Error message includes: "NetworkClass with k8s_manager 'cudn_evpn' supports only one subnet per VirtualNetwork"
-- Error message includes: "OVN Connectors limitation"
-- Error message includes name of existing subnet
+- Error message explains that `cudn_evpn` permits only one Subnet per VirtualNetwork while VMs are present
+- Error message includes the name of the existing Subnet
 
 #### TC-R5-02: Multiple subnets allowed for different k8s manager
 

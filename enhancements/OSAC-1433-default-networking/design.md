@@ -364,7 +364,7 @@ type ClusterSpec struct {
 **Resource creation with optional network attachments:**
 - For ComputeInstance, if `compute_network_attachments` is omitted or empty, resolve both the tenant's default Subnet and SecurityGroup (labeled `osac.openshift.io/default: "true"`). For each supplied attachment, default only the missing subnet or missing/empty SecurityGroup list.
 - For Cluster, if `network_attachment` is omitted or an empty message, resolve both defaults. If the message supplies only one field, default only the other field.
-- For BaremetalInstance, if `network_attachments` is omitted or empty, resolve both defaults and the first default fabric interface from the HostType. For a supplied single entry, default only missing subnet, SecurityGroup list, or interface.
+- For BaremetalInstance, if `network_attachments` is omitted or empty, resolve both defaults and the first default fabric interface from the BareMetalInstanceType. For a supplied single entry, default only missing subnet, SecurityGroup list, or interface.
 - If no defaults exist (should not occur — defaults are mandatory on NetworkClass): return error `No default networking resources available. Please contact your administrator.`
 - A supplied subnet or non-empty SecurityGroup list is used unchanged; defaults do not replace fields that the tenant supplied.
 - For BaremetalInstance, the resolved list contains exactly one attachment; an explicit BMaaS list with more than one attachment is rejected.

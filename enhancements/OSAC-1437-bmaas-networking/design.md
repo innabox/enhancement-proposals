@@ -178,7 +178,7 @@ The [BareMetalInstanceType EP](/enhancements/OSAC-1201-baremetal-instance-types)
 - CaaS resolves the fabric interface from `BareMetalInstanceType.network_ports[].role=fabric`
 - `BareMetalInstanceType.host_label_selector` provides direct inventory matching (OSAC-1201), replacing the former HostType reverse lookup
 
-> **CaaS network attachment source:** For CaaS bare-metal workers, the network attachment originates from `ClusterOrder.spec.network_attachment` (`ClusterNetworkAttachment`) and is enriched per-BMI by the `BareMetalWorkerReconciler`, which resolves the fabric interface from `BareMetalInstanceType.network_ports[]` (first port with `role=fabric`). See [OSAC-2135](/enhancements/OSAC-2135-caas-bare-metal-worker-provisioning/design.md) for the full enrichment flow.
+> **CaaS network attachment source:** For CaaS bare-metal workers, the network attachment originates from `ClusterOrder.spec.networkAttachments[0]` (`ClusterNetworkAttachment`) and is enriched per-BMI by the `BareMetalWorkerReconciler`, using the immutable `fabric_interface` resolved once by fulfillment-service from the node set's `BareMetalInstanceType.network_ports[]` (first port with `role=fabric`). See [OSAC-2135](/enhancements/OSAC-2135-caas-bare-metal-worker-provisioning/design.md) for the full enrichment flow.
 
 #### Interface Role Convention
 
@@ -272,7 +272,6 @@ Same as VMaaS/CaaS — the networking API is uniform.
       - Reads the sole entry from the `network_attachments` list in the CR spec
         (the API keeps the repeated field for compatibility; validation rejects
         lists with more than one entry)
-      - **Operator dispatches switch-side config:** The operator dispatches the `osac-move-network-attachment` job, which resolves `subnetRef` → tenant network segment name and moves the server's selected fabric port **provisioning network → tenant network** via `osac.templates.{{ fabric_manager }}.move_network_attachment` (`host_name` = fabric server name from ExternalHostID, `logical_interface_name` = interface name from HostType, `from_vnet_name` = provisioning network, `to_vnet_name` = tenant network segment). See [Provisioning Network and Port Moves](#provisioning-network-and-port-moves).
       - **Operator dispatches switch-side config:** The operator dispatches the `osac-move-network-attachment` job, which resolves `subnetRef` → tenant network segment name and moves the server's selected fabric port **provisioning network → tenant network** via `osac.templates.{{ fabric_manager }}.move_network_attachment` (`host_name` = fabric server name from ExternalHostID, `logical_interface_name` = interface name from BareMetalInstanceType, `from_vnet_name` = provisioning network, `to_vnet_name` = tenant network segment). See [Provisioning Network and Port Moves](#provisioning-network-and-port-moves).
       - **Network segment readiness wait:** After the port attach, the move playbook polls the fabric manager until the target network segment reaches active/ready state. This ensures the switch fabric has fully converged before the operator triggers the handoff reboot — without this wait, the host may DHCP on the wrong network.
       - Sets condition: `NetworkAttachmentsReady=True`

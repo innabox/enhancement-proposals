@@ -3,7 +3,7 @@ title: type-safe-resource-references
 authors:
   - Haim Tayrie
 creation-date: 2026-07-15
-last-updated: 2026-07-15
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-1330
 prd:
@@ -299,7 +299,7 @@ add new gRPC services, CRDs, webhooks, or finalizers.
 | `public_ip_attachment_type.proto` | Add `PublicIPLocalReference`, `ComputeInstanceLocalReference` (reuse). Replace string fields. |
 | `public_ip_type.proto` | Add `PublicIPPoolReference`. Replace `PublicIPSpec.pool`. |
 | `nat_gateway_type.proto` | Add references for VirtualNetwork and ExternalIP. Replace string fields. |
-| `cluster_type.proto` | Add `ClusterTemplateReference`, `ClusterCatalogItemReference`, `HostTypeReference`. Replace string fields. |
+| `cluster_type.proto` | Add `ClusterTemplateReference`, `ClusterCatalogItemReference`, `BareMetalInstanceTypeReference`. Replace string fields. |
 | `baremetal_instance_type.proto` | Add `BareMetalInstanceCatalogItemReference`. Replace string field. |
 | `role_binding_type.proto` | Add `RoleReference`, `UserReference`. Replace string fields. |
 | `project_membership_type.proto` | Add `ProjectReference`, `UserReference` (reuse). Replace string fields. |
@@ -468,7 +468,7 @@ resource can be in a different tenant or project from the referencing resource:
 | `InstanceTypeDeprecation.replacement` | `InstanceTypeLocalReference` | Same scope |
 | `ClusterSpec.template` | `ClusterTemplateReference` | Templates may be shared across tenants |
 | `ClusterSpec.catalog_item` | `ClusterCatalogItemReference` | Catalog items may be shared across tenants |
-| `ClusterNodeSet.host_type` | `HostTypeReference` | HostTypes are platform-scoped |
+| `ClusterNodeSet.baremetal_instance_type` | `BareMetalInstanceTypeReference` | BareMetalInstanceTypes are platform-scoped |
 | `ComputeInstanceSpec.template` | `ComputeInstanceTemplateReference` | Templates may be shared |
 | `ComputeInstanceSpec.catalog_item` | `ComputeInstanceCatalogItemReference` | Catalog items may be shared |
 | `ComputeInstanceSpec.instance_type` | `InstanceTypeReference` | InstanceTypes may be shared |
@@ -478,7 +478,7 @@ resource can be in a different tenant or project from the referencing resource:
 | `ClusterCatalogItem.template` | `ClusterTemplateReference` | Cross-tenant template reference |
 | `ComputeInstanceCatalogItem.template` | `ComputeInstanceTemplateReference` | Cross-tenant template reference |
 | `BareMetalInstanceCatalogItem.template` | `BareMetalInstanceTemplateReference` | Cross-tenant template reference |
-| `ClusterTemplateNodeSet.host_type` | `HostTypeReference` | Platform-scoped |
+| `ClusterTemplateNodeSet.baremetal_instance_type` | `BareMetalInstanceTypeReference` | Platform-scoped |
 | `ComputeInstanceTemplateSpecDefaults.instance_type` | `InstanceTypeReference` | May be shared |
 | `RoleBindingSpec.role` | `RoleReference` | Roles may be platform-scoped |
 | `RoleBindingSpec.users` | `repeated UserReference` | Users may be cross-project |
@@ -689,7 +689,7 @@ per invalid reference, where the `field` is the proto field path (e.g.,
 human-readable message.
 
 **Platform-scoped resources.** Resources like NetworkClass, ExternalIPPool,
-PublicIPPool, and HostType are platform-scoped and not filtered by tenant. The
+PublicIPPool, and BareMetalInstanceType are platform-scoped and not filtered by tenant. The
 lookup function registered for these types omits tenant filtering.
 
 **Interceptor registration in the chain:**
@@ -860,7 +860,7 @@ database triggers, CLI, UI), and leaves the system fully functional.
 | 1 - Interceptor + Networking | VirtualNetwork, Subnet, SecurityGroup, NetworkClass | `virtual_network` (x3) | Foundation: build interceptor with the simplest local networking reference graph. NetworkClass is deployment-resolved and has no tenant reference field. |
 | 2 - Compute | ComputeInstance, ComputeInstanceTemplate, ComputeInstanceCatalogItem, InstanceType | `template`, `catalog_item`, `instance_type`, `subnet`, `security_groups`, `replacement` | Highest user-facing impact. Depends on networking references from Chunk 1. |
 | 3 - IP Management | ExternalIP, ExternalIPPool, ExternalIPAttachment, PublicIP, PublicIPPool, PublicIPAttachment, NATGateway | `pool` (x2), `external_ip` (x2), `public_ip`, `virtual_network`, `compute_instance`, `cluster`, `baremetal_instance` | IP resources have complex oneof targets. |
-| 4 - Clusters + Bare Metal | Cluster, ClusterTemplate, ClusterCatalogItem, BareMetalInstance, BareMetalInstanceCatalogItem, BareMetalInstanceTemplate, HostType | `template` (x2), `catalog_item` (x2), `host_type` (x2) | CaaS and BMaaS services. |
+| 4 - Clusters + Bare Metal | Cluster, ClusterTemplate, ClusterCatalogItem, BareMetalInstance, BareMetalInstanceCatalogItem, BareMetalInstanceTemplate, BareMetalInstanceType | `template` (x2), `catalog_item` (x2), `baremetal_instance_type` (x2) | CaaS and BMaaS services. |
 | 5 - IAM | RoleBinding, ProjectMembership, Role, User, Project | `role`, `users`, `project`, `user` | IAM references are self-contained. |
 
 Within each chunk, the implementation order is:
