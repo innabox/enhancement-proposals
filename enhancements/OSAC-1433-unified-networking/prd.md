@@ -354,11 +354,11 @@ on the provider's configuration.
 
 #### FR-7: Single network attachment for bare metal (R7)
 
-Bare-metal host types may expose multiple physical interfaces. A
-`BaremetalInstance` accepts at most one tenant network attachment, selected
-from the interface descriptions provided by the template. The selected
-attachment supplies the server's tenant IP, default route, and ExternalIP
-DNAT target.
+Bare-metal host types may expose multiple physical interfaces. The
+`BaremetalInstance.network_attachments` API field remains repeated for
+compatibility, but accepts at most one tenant attachment, selected from the
+interface descriptions provided by the template. The selected attachment
+supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 
 ### 4.2 Non-Functional Requirements
 
@@ -422,7 +422,7 @@ DNAT target.
 
 - [ ] Host types describe available interfaces (name, role, description) for bare-metal servers
 - [ ] Bare-metal network attachments include an optional interface reference that identifies a named interface from the host type
-- [ ] Bare-metal servers accept at most one network attachment, using one valid physical interface
+- [ ] Bare-metal servers accept at most one `network_attachments` entry, using one valid physical interface
 - [ ] All referenced subnets must belong to the same VirtualNetwork
 
 ## 6. Dependencies

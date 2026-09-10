@@ -1288,10 +1288,11 @@ behavior is defined by the VMaaS design. The deprecated shared
 `network_attachments` field is a migration compatibility path, not the
 canonical Catalog policy field.
 
-BaremetalInstance accepts at most one `network_attachment`. When present,
-that attachment is implicitly primary and supplies the default gateway,
-ExternalIP DNAT target, and NATGateway source address. There is no secondary
-BMaaS attachment or tenant-facing multi-homing behavior.
+BaremetalInstance retains the repeated `network_attachments` API field for
+compatibility, but accepts at most one entry. When present, that entry is
+implicitly primary and supplies the default gateway, ExternalIP DNAT target,
+and NATGateway source address. There is no secondary BMaaS attachment or
+tenant-facing multi-homing behavior.
 
 Cluster supports a single `network_attachment` — one subnet for all node
 sets. Per-node-set subnet placement is not supported in v0.2. All subnets

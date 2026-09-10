@@ -226,6 +226,8 @@ Same as VMaaS/CaaS — the networking API is uniform.
      --network-attachment interface=data-0,subnet=my-subnet,security-groups=my-sg \
      --name my-server
    ```
+   The CLI's singular `--network-attachment` option populates the repeated
+   `network_attachments` API field with its one allowed entry.
 
    With defaults + auto external access:
    ```bash
@@ -265,7 +267,10 @@ Same as VMaaS/CaaS — the networking API is uniform.
       - Host-side networking is handled by DHCP — the template does NOT configure static IPs, gateway, or DNS. The host receives its IP automatically from the provisioning network DHCP server.
 
    c. **`reconcileNetworking` (runs after provisioning is complete):**
-      - Reads `network_attachments` from the CR spec
+      - Reads the sole entry from the `network_attachments` list in the CR spec
+        (the API keeps the repeated field for compatibility; validation rejects
+        lists with more than one entry)
+      - **Operator dispatches switch-side config:** The operator dispatches the `osac-move-network-attachment` job, which resolves `subnetRef` → tenant network segment name and moves the server's selected fabric port **provisioning network → tenant network** via `osac.templates.{{ fabric_manager }}.move_network_attachment` (`host_name` = fabric server name from ExternalHostID, `logical_interface_name` = interface name from HostType, `from_vnet_name` = provisioning network, `to_vnet_name` = tenant network segment). See [Provisioning Network and Port Moves](#provisioning-network-and-port-moves).
       - **Operator dispatches switch-side config:** The operator dispatches the `osac-move-network-attachment` job, which resolves `subnetRef` → tenant network segment name and moves the server's selected fabric port **provisioning network → tenant network** via `osac.templates.{{ fabric_manager }}.move_network_attachment` (`host_name` = fabric server name from ExternalHostID, `logical_interface_name` = interface name from BareMetalInstanceType, `from_vnet_name` = provisioning network, `to_vnet_name` = tenant network segment). See [Provisioning Network and Port Moves](#provisioning-network-and-port-moves).
       - **Network segment readiness wait:** After the port attach, the move playbook polls the fabric manager until the target network segment reaches active/ready state. This ensures the switch fabric has fully converged before the operator triggers the handoff reboot — without this wait, the host may DHCP on the wrong network.
       - Sets condition: `NetworkAttachmentsReady=True`
@@ -386,6 +391,11 @@ message BareMetalNetworkAttachmentStatus {
   bool primary = 4;
 }
 ```
+
+The API intentionally retains the repeated `network_attachments` field rather
+than introducing a singular replacement. Its maximum cardinality is one; an
+omitted list invokes default resolution, while a supplied list must contain
+exactly one valid attachment.
 
 #### Operator CRD (bare-metal-fulfillment-operator)
 
