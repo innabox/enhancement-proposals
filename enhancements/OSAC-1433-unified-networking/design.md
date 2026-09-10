@@ -494,6 +494,46 @@ correct physical interfaces based on each node set's host type.
 In all cases, the resource ends up on the fabric. The fabric manager sees
 all resources equally — there is no VM-vs-BM distinction.
 
+#### Catalog Item integration
+
+Catalog Items are an optional, create-time governance layer over the resource
+API. They govern the tenant-facing network field on a resource; they do not
+create or select the provider's NetworkClass, VirtualNetwork, provisioning
+network, fabric manager, or k8s manager.
+
+The resource-specific Catalog fields are:
+
+| Resource | Catalog-governed network field | System-resolved networking |
+|---|---|---|
+| ComputeInstance | `compute_network_attachments` (the canonical per-resource field) | CUDN/NAD placement and the hosting namespace |
+| Cluster | `network_attachment` (one attachment for the cluster) | `fabric_interface` for each node set |
+| BaremetalInstance | `network_attachments` (at most one attachment) | Provisioning-network handoff and switch-side port operations |
+
+At Create, Catalog policy and tenant input are resolved first, followed by
+Template defaults. If the resulting tenant-facing attachment is still unset,
+the tenant's default networking is applied. The final value is then checked
+with the ordinary subnet, SecurityGroup, VirtualNetwork, cardinality, primary,
+and interface rules for that resource type.
+
+A shared Catalog Item cannot lock or default a tenant-local Subnet or
+SecurityGroup. It must leave such values editable or ungoverned so the tenant
+can supply them or receive the tenant's default network. A tenant-owned item
+may reference resources in its own tenant and project scope.
+
+The Catalog `auto_external_ip_attachment` policy governs only whether the
+resource-specific automatic external-access behavior is enabled. It does not
+select an ExternalIP, ExternalIPPool, NATGateway, or allocation strategy. The
+resulting side effect remains resource-specific: one automatically attached
+ExternalIP for Compute and Bare Metal, and the API and ingress ExternalIPs for
+Cluster.
+
+Catalog governance ends after the resource is created. Later resource updates
+follow the networking lifecycle rules below; in particular, immutable
+attachment structure is distinct from mutable SecurityGroup membership.
+
+See [Catalog Items v2](/enhancements/OSAC-3538-catalog-items-v2/design.md)
+for the typed policy representation and reference lifecycle.
+
 #### External Access (Same for All Resource Types)
 
 Since all resources are on the fabric, external access operations are
@@ -829,9 +869,10 @@ interfaces, but BMaaS does not attach them to the tenant network.
 
 Each resource type has its own network attachment message. The core fields
 (`subnet`, `security_groups`) are shared, but each type adds
-resource-specific fields. `network_attachments` are immutable after
-resource creation — changing network attachment requires recreating the
-resource.
+resource-specific fields. The attachment list or singular attachment,
+subnet, interface, and primary designation are immutable after resource
+creation. SecurityGroup membership remains mutable where the resource-specific
+design permits it.
 
 **ComputeNetworkAttachment** (for ComputeInstance):
 
@@ -1075,7 +1116,7 @@ of their own deletion state), the controller requeues with a short interval
 | Controller | Gate deprovision on |
 |---|---|
 | VirtualNetwork | No Subnet, SecurityGroup, or NATGateway CRs with `spec.virtualNetwork` referencing this VNet |
-| Subnet | No ComputeInstance CRs with `spec.networkAttachments[].subnetRef` referencing this Subnet; no BareMetalInstance CRs with `spec.networkAttachments[].subnetRef` referencing this Subnet (see [BMaaS Networking](/enhancements/OSAC-1437-bmaas-networking/design.md)) |
+| Subnet | No ComputeInstance CRs with `spec.computeNetworkAttachments[].subnetRef`, no ClusterOrder CRs with `spec.networkAttachment.subnetRef`, and no BareMetalInstance CRs with `spec.networkAttachments[].subnetRef` referencing this Subnet (see the per-service designs) |
 | ExternalIP | No ExternalIPAttachment or NATGateway CRs with `spec.externalIP` referencing this EIP |
 | ExternalIPPool | No ExternalIP CRs with `spec.pool` referencing this pool |
 
@@ -1109,6 +1150,13 @@ This is the same pattern used during provisioning (e.g., the NATGateway
 controller gates provisioning on ExternalIP readiness and VirtualNetwork
 readiness) -- applied symmetrically to the deprovision path.
 
+Catalog Items with governed Subnet or SecurityGroup references are also strong
+references while those policies are stored. Their reverse-reference
+protection is defined by Catalog Items v2 and applies even when the Catalog
+Item has not yet produced a resource. After materialization, the resource's
+network reference continues to protect the network object, while
+`spec.catalog_item` remains weak provenance.
+
 #### NATGateway Scope
 
 One NATGateway per VirtualNetwork. All subnets in the VN use the gateway.
@@ -1116,9 +1164,11 @@ Per-subnet NAT association is a future enhancement.
 
 #### Attachment cardinality and primary behavior
 
-ComputeInstance supports multiple `network_attachments` (virtual NICs). All
-subnets must belong to the same VN, and VM primary-attachment behavior is
-defined by the VMaaS design.
+ComputeInstance supports multiple `compute_network_attachments` (virtual
+NICs). All subnets must belong to the same VN, and VM primary-attachment
+behavior is defined by the VMaaS design. The deprecated shared
+`network_attachments` field is a migration compatibility path, not the
+canonical Catalog policy field.
 
 BaremetalInstance accepts at most one `network_attachment`. When present,
 that attachment is implicitly primary and supplies the default gateway,
@@ -1266,9 +1316,11 @@ time. Creates ambiguous subnet state and complicates the tenant experience.
    not necessarily internet-routable. Applies equally to air-gapped and
    internet-connected deployments.
 
-9. **network_attachments immutability.** Network attachments are immutable
-   after resource creation. Changing network attachment requires recreating
-   the resource.
+9. **Attachment immutability.** Attachment cardinality, Subnet, interface,
+   and primary designation are immutable after resource creation. SecurityGroup
+   membership remains mutable where the resource-specific design permits it.
+   Changing the immutable attachment structure requires recreating the
+   resource.
 
 10. **Security enforcement.** The fabric is the single enforcement point
     for SecurityGroups. No separate K8s-level ACL needed — VMs are on the

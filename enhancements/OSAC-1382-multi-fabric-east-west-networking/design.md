@@ -391,10 +391,23 @@ via the same Server Cluster's EW V-Net. FabricDomain does not remove N-S.
 
 ### Multiple FabricDomains, few NetworkClasses
 
-NetworkClass is a catalog entry ("how we implement EW on this backend").
-FabricDomain is an instance ("these servers, this fabric type"). Many domains
-may reference one NetworkClass. Multiple NetworkClasses only when backends or
-templates differ (e.g. GPU vs storage template, Netris vs NICo).
+NetworkClass is a provider configuration profile ("how we implement EW on
+this backend"). FabricDomain is an instance ("these servers, this fabric
+type"). Many domains may reference one NetworkClass. Multiple NetworkClasses
+only when backends or templates differ (e.g. GPU vs storage template, Netris
+vs NICo). NetworkClass is not an OSAC Catalog Item and is not a customer
+offering.
+
+### Catalog Item boundary
+
+Catalog Item v2 governs create-time choices on a ComputeInstance, Cluster, or
+BaremetalInstance, including the resource's north-south network attachment.
+It does not create, select, or compose a `FabricDomain`, and it does not
+govern the NetworkClass, east-west template, server membership, NIC mapping,
+or provisioning networks. A resource offering that needs both a tenant
+Subnet and an east-west FabricDomain therefore requires the FabricDomain to be
+managed as a separate resource; multi-resource Catalog offerings are outside
+the current Catalog Item scope.
 
 ### Who manages InfiniBand / NVLink?
 

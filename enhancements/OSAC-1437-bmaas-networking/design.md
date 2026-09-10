@@ -422,7 +422,10 @@ type BareMetalNetworkAttachmentStatus struct {
 }
 ```
 
-CEL immutability: `network_attachments` list is immutable after creation (subnet refs and interface are immutable). Only `securityGroupRefs` is mutable. BMaaS accepts at most one network attachment, and that attachment is implicitly primary.
+CEL immutability: `network_attachments` list and every network-owned field are
+immutable after creation, including subnet, SecurityGroup membership, interface,
+and primary designation. BMaaS accepts at most one network attachment, and that
+attachment is implicitly primary.
 
 CEL validation rule:
 ```yaml
@@ -443,6 +446,25 @@ The `mutateBMI()` function in the fulfillment-service's BM reconciler currently 
 - If the attachment's `interface` is omitted, it defaults to the first port with `role=fabric` from the BareMetalInstanceType
 - The single attachment is implicitly primary; the `primary` field is not used to select among attachments
 - network_attachments are immutable after creation
+
+#### Catalog Item interaction
+
+Catalog Item v2 may govern the complete `network_attachments` list. It may
+lock the single attachment or make it editable with an optional default. The
+same Bare Metal rules apply after Catalog resolution: at most one attachment,
+one implicit primary, a valid interface from the effective
+BareMetalInstanceType, no lifecycle interface, and a Subnet and SecurityGroup
+set in the same VirtualNetwork.
+
+Resolution occurs before the tenant default network is applied. A locked list
+rejects conflicting tenant input; an editable list accepts tenant input,
+otherwise uses its Catalog default, Template defaults, and then the tenant's
+default Subnet, SecurityGroup, and default fabric interface when the list is
+still unset. A shared Catalog Item cannot lock or default tenant-local network
+references.
+
+The provisioning network, lifecycle interfaces, port moves, and DHCP lease
+discovery are infrastructure behavior and are never Catalog-governed fields.
 
 ### Implementation Details/Notes/Constraints
 
@@ -768,6 +790,7 @@ Resolved: After `reconcileProvisioning` completes and the host has received a DH
 ### Unit Tests
 
 - fulfillment-service: single-attachment validation (reject more than one attachment, accept the single attachment as implicit primary)
+- fulfillment-service: Catalog `network_attachments` policy resolution (locked conflict, editable default, tenant default fallthrough, interface validation, and shared-item local-reference rejection)
 - fulfillment-service: interface validation (reject interface not in BareMetalInstanceType, reject lifecycle interface)
 - fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
 - fulfillment-service: interface validation (reject interface not in BareMetalInstanceType, reject lifecycle interface)
@@ -778,6 +801,7 @@ Resolved: After `reconcileProvisioning` completes and the host has received a DH
 ### Integration Tests
 
 - E2E: create BaremetalInstance with one attachment, verify the selected switch port is configured and the IP is allocated from the selected subnet
+- E2E: create BaremetalInstance through a Catalog Item with a locked or editable attachment, verify interface, implicit-primary, and tenant-default precedence
 - E2E: create BaremetalInstance with `--external-ip-attachment`, verify auto ExternalIP + ExternalIPAttachment created, DNAT rule functional
 - E2E: delete BaremetalInstance with auto-provisioned resources, verify ExternalIPAttachment and ExternalIP cleaned up
 - E2E: create BaremetalInstance with interface not in BareMetalInstanceType, verify error returned

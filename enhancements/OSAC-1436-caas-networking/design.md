@@ -367,8 +367,25 @@ Migration adds to clusters table:
 
 - network_attachment: subnet exists, is Ready
 - Each node set's `baremetal_instance_type` must have at least one `network_ports` entry with `role=fabric` for fabric_interface resolution
-- Immutability: network_attachment is immutable after creation
+- Immutability: the complete network attachment and all network-owned fields are immutable after creation, including SecurityGroup membership
 - target_endpoint validation on ExternalIPAttachment: required when target is cluster, must be `API` or `INGRESS`
+
+#### Catalog Item interaction
+
+Catalog Item v2 may govern the singular `network_attachment` field as a whole
+structured value. It may lock the attachment or make it editable with an
+optional default. Catalog resolution occurs before tenant default networking:
+tenant input wins for an editable policy, then the Catalog default, Template
+defaults, and finally the tenant's default Subnet and SecurityGroup are used
+when the attachment remains unset.
+
+The Catalog Item governs only the tenant-facing Subnet and SecurityGroup
+references. `fabric_interface` is derived separately for each node set from
+BareMetalInstanceType and is never a Catalog field. A shared Catalog Item therefore cannot
+lock or default tenant-local network references; it must leave the attachment
+editable or ungoverned. The normal CaaS rules still apply: one attachment per
+Cluster, all node sets share its Subnet, and all referenced objects belong to
+the same VirtualNetwork.
 
 #### Template Changes
 
@@ -546,9 +563,9 @@ Resolved: Kubeconfig API address uses the MetalLB VIP directly — workers are o
 - fulfillment-service: network_attachment validation (subnet exists, Ready, same VN)
 - fulfillment-service: fabric_interface resolution per node set (BareMetalInstanceType must have fabric-role port)
 - fulfillment-service: interface resolution from BareMetalInstanceType (pick first fabric-role port from network_ports[])
-- fulfillment-service: auto ExternalIP pool selection (pick READY pool with most capacity, respect IP family)
 - osac-operator BareMetalWorkerReconciler: BMI creation with enriched network_attachment
 - osac-operator BareMetalWorkerReconciler: Agent-to-BMI MAC correlation
+- fulfillment-service: Catalog `network_attachment` policy resolution (locked conflict, editable default, tenant default fallthrough, and shared-item local-reference rejection)
 - fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
 - osac-operator ClusterOrder controller: agent selection logic
 - osac-operator ClusterOrder controller: network attachment resolution
@@ -561,6 +578,7 @@ Resolved: Kubeconfig API address uses the MetalLB VIP directly — workers are o
 - E2E: create Cluster with `--external-ip-attachment`, verify full connectivity (ExternalIP + ExternalIPAttachment for API and ingress)
 - E2E: delete Cluster with auto-provisioned resources, verify ExternalIPAttachments and ExternalIPs cleaned up
 - E2E: create Cluster with omitted network_attachment, verify default Subnet + SecurityGroup populated
+- E2E: create Cluster through a Catalog Item with a locked or editable `network_attachment`, verify tenant override and default-network precedence
 - E2E: VIP feedback loop — verify template writes VIPs to ClusterOrder status, fulfillment-service syncs to Cluster, ExternalIPAttachment controller creates DNAT
 
 ### Tricky Test Cases

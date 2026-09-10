@@ -24,7 +24,7 @@ This enhancement extends the unified networking API to support VMaaS-specific re
 
 This enhancement is an expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md), providing the detailed per-service flow for this service type. The unified EP defines the shared architecture (NetworkClass, dispatcher, infrastructure-agnostic subnets, resource hierarchy); this document defines how this specific service consumes that architecture.
 
-ComputeInstance currently uses a shared `NetworkAttachment` message that lacks a `primary` field, preventing multi-NIC VM provisioning with a designated default gateway. This enhancement introduces `ComputeNetworkAttachment` with a `primary` field, makes the attachments field optional (populating with tenant defaults when omitted), and adds `auto_external_ip_attachment` to enable fully connected VMs in a single API call. See [PRD](prd.md) for detailed requirements.
+ComputeInstance currently uses a shared `NetworkAttachment` message that lacks a `primary` field, preventing multi-NIC VM provisioning with a designated default gateway. This enhancement introduces `ComputeNetworkAttachment` with a `primary` field, makes `compute_network_attachments` optional (populating with tenant defaults when omitted), and adds `auto_external_ip_attachment` to enable fully connected VMs in a single API call. See [PRD](prd.md) for detailed requirements.
 
 ## Deployment Topology
 
@@ -72,7 +72,7 @@ ComputeInstance already participates in the networking API. Today's flow:
 
 - Multi-NIC support with designated primary attachment for default gateway
 - Resource-specific attachment message (`ComputeNetworkAttachment`) with `primary` field
-- Optional `network_attachments` field — populate with tenant defaults when omitted
+- Optional `compute_network_attachments` field — populate with tenant defaults when omitted
 - Auto ExternalIP attachment (`auto_external_ip_attachment`) for single-call inbound connectivity
 - BM-only deployment validation to reject VM provisioning when no k8s_manager is available
 
@@ -258,6 +258,28 @@ The feedback controller populates `ComputeNetworkAttachmentStatuses` by watching
 - Primary validation: if multiple attachments, exactly one primary
 - BM-only deployment check: if the NetworkClass has no k8sManager, reject ComputeInstance creation
 
+#### Catalog Item interaction
+
+Catalog Item v2 governs the canonical `compute_network_attachments` field as
+one complete list. It may lock the list or make it editable with an optional
+default. A Catalog Item does not govern the deprecated field-14
+`network_attachments` surface separately; compatibility input is converted to
+the canonical representation before the same policy is applied.
+
+Catalog resolution happens before tenant default networking. A locked list
+rejects conflicting tenant input. An editable list accepts tenant input,
+otherwise uses its Catalog default, then the Template default, and finally the
+tenant's default Subnet and SecurityGroup when the attachment list remains
+unset.
+
+The Catalog list must obey the same Compute rules as direct creation: all
+attachments belong to one VirtualNetwork, one attachment is implicit primary
+when the list has one entry, and a list with multiple entries has exactly one
+`primary: true` entry. Catalog policy can govern subnet, SecurityGroup, and
+primary values; CUDN/NAD placement and hosting-cluster selection remain
+system concerns. A shared Catalog Item cannot lock or default tenant-local
+Subnet or SecurityGroup references.
+
 #### Template Changes (osac-aap)
 
 - `osac.templates.ocp_virt_vm/tasks/create_build_spec.yaml`: support multiple KubeVirt network/interface definitions from `compute_network_attachments`
@@ -271,7 +293,7 @@ The feedback controller populates `ComputeNetworkAttachmentStatuses` by watching
 
 | Component | Responsibility |
 |-----------|---------------|
-| fulfillment-service | Validate network_attachments, create CR, auto-provision ExternalIP, write `compute_network_attachment_statuses` from feedback |
+| fulfillment-service | Validate `compute_network_attachments`, create CR, auto-provision ExternalIP, write `compute_network_attachment_statuses` from feedback |
 | osac-operator ComputeInstance controller | Resolve subnet → namespace, trigger AAP, clean up auto-provisioned resources |
 | osac-operator ComputeInstance feedback controller | Watch KubeVirt VMI network status, discover per-attachment IPs, Signal fulfillment-service |
 | osac-operator networking controllers | Dispatch to managers via dispatcher (VN, Subnet, SG, ExternalIP) |
@@ -406,6 +428,7 @@ Resolved: Return error, no resource persisted. Pool capacity checked synchronous
 ### Unit Tests
 
 - fulfillment-service: primary validation (reject >1 primary, accept single implicit primary, accept explicit primary)
+- fulfillment-service: Catalog policy resolution for `compute_network_attachments` (locked conflict, editable default, tenant default fallthrough, and shared-item local-reference rejection)
 - fulfillment-service: dual-field validation (reject both old and new, convert old → new)
 - fulfillment-service: BM-only deployment validation (reject VM when no k8s_manager)
 - fulfillment-service: auto ExternalIP pool selection (pick READY IPv4 pool with most capacity)
