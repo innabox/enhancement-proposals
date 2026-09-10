@@ -60,7 +60,12 @@ Tenants cannot create VMs with multiple network interfaces or designate which in
 
 #### Optional Network Configuration with Defaults
 
-- **FR-3:** Network configuration is optional when creating a VM. When omitted, the system uses the tenant's default subnet and default security group (see Default Networking PRD). The resolved configuration is stored with the VM so the VM is self-describing after creation. [User]
+- **FR-3:** Network configuration is optional when creating a VM. When the
+  attachment list is omitted or empty, the system uses both tenant defaults.
+  When an attachment omits only its subnet or SecurityGroup list, only that
+  field is defaulted; supplied fields are preserved. The resolved
+  configuration is stored with the VM so the VM is self-describing after
+  creation. [User]
 
 #### Auto External IP
 

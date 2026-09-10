@@ -54,8 +54,9 @@ This section defines key terms used throughout this document.
   are attached to subnets to receive IP addresses and network connectivity.
 
 - **SecurityGroup**: A stateful firewall controlling inbound and outbound
-  traffic for resources. Rules specify allowed protocols, ports, and
-  source/destination addresses.
+  traffic for resources. Tenant rules specify an action (`allow` or `deny`),
+  protocol, optional single port, direction, and IPv4 source/destination
+  CIDR.
 
 - **ExternalIPPool**: A provider-defined pool of IP addresses that are
   routable outside the VirtualNetwork. "External" means external to the VN —
@@ -73,18 +74,18 @@ This section defines key terms used throughout this document.
   egress but without a controlled source identity.
 
 - **NetworkClass**: A provider-configured resource that defines how networking
-  is implemented. Specifies which fabric manager and K8s manager handle
-  networking. In the current design, tenants select it when creating a
-  VirtualNetwork (this is one of the gaps — see #2).
+  is implemented. It specifies the available fabric and/or K8s manager for the
+  deployment. There is exactly one NetworkClass per deployment; tenants do not
+  select it per VirtualNetwork.
 
-- **Fabric Manager**: A single product (e.g., Netris, Neutron) that manages
-  all physical networking: tenant isolation, ACLs, IP allocation, DNAT,
-  SNAT. The physical fabric is one infrastructure — one controller manages
-  it all.
+- **Fabric Manager**: An optional single product (e.g., Netris, Neutron) that
+  manages physical networking: tenant isolation, ACLs, IP allocation, DNAT,
+  and SNAT.
 
-- **K8s Manager**: Handles everything needed to make VMs part of the fabric:
-  creates the K8s overlay and bridges it to the fabric segment. Only needed
-  for deployments that host VMs.
+- **K8s Manager**: A provider-registered networking manager. It may bridge a
+  K8s overlay to a fabric when paired with a Fabric Manager, or provide the
+  complete supported networking surface in a K8s-only deployment. NATGateway
+  is unsupported in the K8s-only OVN mode.
 
 - **Fabric**: The physical network infrastructure — switches, routers,
   gateways — that connects bare-metal servers and provides external
@@ -165,23 +166,19 @@ SecurityGroups, and cannot share a VirtualNetwork between bare-metal servers
 and other resources. Both service types build ad-hoc networking outside the
 API.
 
-#### Gap #2: Tenants must choose networking backends
+#### Gap #2: Tenants must choose networking backends — resolved
 
-NetworkClass is modeled after Kubernetes StorageClass — tenants select it when
-creating a VirtualNetwork. But unlike StorageClass (where "fast" vs "cheap" is
-a meaningful tenant choice about capability), NetworkClass exposes network
-backend implementation details ("udn-net" vs "phys-net") that tenants should
-not need to understand. The provider's infrastructure determines the backend,
-not the tenant's preference.
+The provider's infrastructure determines the backend. The single deployment
+NetworkClass is resolved by the platform, and tenants provide only the
+tenant-owned network fields such as the VirtualNetwork CIDR. No tenant-facing
+NetworkClass selection or implementation-backend choice is exposed.
 
-#### Gap #3: No manager capability discovery or registration
+#### Gap #3: No manager capability discovery or registration — resolved
 
-There is no registry of which networking managers are installed or what each
-supports. A K8s manager like `cudn_localnet` handles VM overlay and bridging
-but not IP allocation or ACLs. A fabric manager like Netris handles
-everything on the physical side. The system has no way to know this — there
-is no machine-readable declaration of manager capabilities, and no validation
-that a manager is assigned to a role it can handle.
+Manager registration and capability declarations determine which manager
+combination is valid. A K8s-only manager must declare support for all shared
+networking resources except NATGateway; the operator rejects unsupported
+resource creation rather than leaving it Pending.
 
 #### Gap #4: ExternalIPAttachment only supports VMs
 
@@ -282,7 +279,7 @@ the cluster's VIPs are discovered (see
 - As a tenant, I want to allocate ExternalIPs and attach them to my VMs,
   clusters, or bare-metal servers for inbound access
 - As a tenant, I want to create a NATGateway for outbound access from my
-  VirtualNetwork
+  VirtualNetwork when the deployment's configured managers support it
 
 ### CaaS-Specific Stories
 
@@ -352,6 +349,19 @@ Providers configure which networking backends handle network operations.
 Tenants never choose networking backends — the system selects them based
 on the provider's configuration.
 
+At least one of Fabric Manager or K8s Manager must be configured. A K8s-only
+deployment supports VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool,
+ExternalIP, and ExternalIPAttachment; NATGateway creation is rejected because
+of the current OVN limitation.
+
+#### FR-6a: Deployment baseline and tenant SecurityGroups
+
+The deployment has one provider-owned baseline permit policy that is always
+evaluated and is not represented as a tenant SecurityGroup rule. A tenant
+default SecurityGroup is used only as the fallback attachment when a workload
+does not provide SecurityGroups. Tenant-created SecurityGroups require at
+least one explicit allow/deny rule. The most-specific matching rule wins.
+
 #### FR-7: Single network attachment for bare metal (R7)
 
 Bare-metal host types may expose multiple physical interfaces. The
@@ -375,6 +385,8 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 - [ ] Resources in the same Subnet are in the same L2 broadcast domain
 - [ ] Resources in different Subnets within the same VirtualNetwork can communicate via Layer 3 routing
 - [ ] SecurityGroups control which traffic is permitted within these boundaries — enforced uniformly for all resource types
+- [ ] The provider-owned deployment baseline permit policy remains active with both default and explicitly selected tenant SecurityGroups
+- [ ] Tenant-created SecurityGroups contain at least one explicit rule with a supported action, direction, protocol, and IPv4 CIDR
 - [ ] Bare-metal servers in the same Subnet are in the same broadcast domain regardless of their physical location (rack, switch)
 - [ ] VMs in the same Subnet are in the same broadcast domain regardless of which infrastructure they run on
 - [ ] VMs are reachable at their subnet IP alongside bare-metal servers and cluster nodes
@@ -385,6 +397,8 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 - [ ] Each resource type has its own network attachment configuration appropriate to the resource (e.g., BMaaS uses one physical attachment, clusters use a single shared attachment)
 - [ ] ExternalIPAttachment supports all three service types as targets
 - [ ] The tenant workflow for creating networking resources is identical regardless of service type
+- [ ] NetworkClass manager combinations are resolved by the provider; tenants do not select a NetworkClass per VirtualNetwork
+- [ ] K8s-only deployments reject NATGateway creation and support the other shared networking resources through the registered K8s manager
 
 ### Network Operations and Immutability
 

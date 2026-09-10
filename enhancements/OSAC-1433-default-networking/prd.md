@@ -37,7 +37,7 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 ### 2.2 Non-Goals
 
 - Custom default configurations per tenant (all tenants in a deployment
-  receive the same default CIDR and hard-coded default SecurityGroup policy)
+  receive the same default CIDR and deployment-wide baseline policy)
 - Auto-provisioning of VirtualNetworks or Subnets beyond the initial
   default (tenants create additional VNs manually)
 - UI support for simplified creation (deferred — API and CLI only for now)
@@ -88,18 +88,20 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 #### Default Networking
 
 - **FR-1:** At tenant onboarding, the system provisions a default
-  VirtualNetwork, IPv4 Subnet, and SecurityGroup for the tenant. The tenant
-  transitions to READY only after all
-  default networking resources are also READY. If default networking
+  VirtualNetwork, IPv4 Subnet, and SecurityGroup for the tenant, and provisions
+  a default NATGateway only when the NetworkClass advertises NATGateway
+  support. The tenant transitions to READY only after all supported default
+  networking resources are also READY. If default networking
   provisioning fails, the tenant remains in a non-READY state with a
   status condition describing the failure. The Cloud Provider Admin can
   inspect the failure and retry by deleting and re-creating the tenant.
   [User]
-- **FR-2:** The Cloud Infrastructure Admin supplies default networking
-  parameters (IPv4 VN and Subnet CIDRs) when creating the NetworkClass. The
-  default SecurityGroup uses the hard-coded permit-all policy. Defaults are
-  required — a NetworkClass without defaults is rejected at creation time,
-  and the NetworkClass network configuration is immutable thereafter. [User]
+- **FR-2:** The Cloud Infrastructure Admin supplies required default networking
+  parameters (IPv4 VN and Subnet CIDRs) when creating the single deployment
+  NetworkClass. A NetworkClass without `defaults` is rejected at creation
+  time, and the NetworkClass network configuration is immutable thereafter.
+  The deployment-wide baseline permit policy is always present and is separate
+  from the tenant fallback SecurityGroup. [User]
 - **FR-3:** All tenants receive the same default IPv4 CIDR ranges as configured
   on the NetworkClass. Tenants are isolated at the
   network level — the unified networking API provides VirtualNetworks
@@ -115,13 +117,14 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 #### Optional Network Attachments
 
 - **FR-6:** The network attachment configuration on ComputeInstance,
-  Cluster, and BaremetalInstance is optional. When omitted, the system
-  populates it with the tenant's default Subnet and default SecurityGroup.
+  Cluster, and BaremetalInstance is optional. When omitted or empty, the
+  system populates both the tenant's default Subnet and default SecurityGroup.
   The resolved attachments are stored with the resource so the resource is
   self-describing after creation. For BMaaS, resolution produces exactly one
   tenant network attachment. [User]
-- **FR-7:** When a resource is created with explicit network attachments,
-  no defaults are applied. [User]
+- **FR-7:** When an attachment supplies only some network fields, the system
+  defaults only the missing fields. A supplied Subnet or non-empty
+  SecurityGroup list is preserved unchanged. [User]
 
 #### Auto ExternalIP
 
@@ -153,9 +156,11 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 #### Default NATGateway
 
 - **FR-12:** At tenant onboarding, the system also provisions a
-  NATGateway on the default VirtualNetwork with an automatically
-  allocated ExternalIP. The NATGateway provides outbound connectivity
-  for all resources on the default VirtualNetwork. [User]
+  NATGateway on the default VirtualNetwork with an automatically allocated
+  ExternalIP only when the NetworkClass advertises NATGateway support. The
+  NATGateway provides outbound connectivity for all resources on the default
+  VirtualNetwork. K8s-only OVN deployments reject NATGateway because of the
+  current implementation limitation. [User]
 
 ## 5. Acceptance Criteria
 
@@ -172,8 +177,9 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
   ExternalIP
 - [ ] A BaremetalInstance created without explicit network attachments has
   exactly one resolved default network attachment
-- [ ] Default VirtualNetwork, IPv4 Subnet, and SecurityGroup
-  exist and are READY before the tenant's first resource creation
+- [ ] Default VirtualNetwork, IPv4 Subnet, and SecurityGroup exist and are
+  READY before the tenant's first resource creation; NATGateway is also READY
+  when the deployment advertises that capability
 - [ ] Default resources appear in list views with a label identifying
   them as defaults
 - [ ] Update and patch requests for default network resources and their
@@ -183,8 +189,9 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 - [ ] Deleting a resource with auto-provisioned ExternalIP causes the
   auto-created ExternalIP and ExternalIPAttachment to be cleaned up
   automatically
-- [ ] Creating a resource with explicit network attachments bypasses
-  defaults entirely — no default resources are referenced
+- [ ] Creating a resource with complete explicit network attachments preserves
+  all supplied fields; creating one with partial attachments defaults only the
+  missing fields
 - [ ] When no ExternalIPPool has available capacity, the create API call
   returns an error and the resource is not persisted
 - [ ] A resource created without explicit network attachments shows the

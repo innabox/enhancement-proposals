@@ -173,28 +173,25 @@ project.
 6. On success, the created ComputeInstance is returned with the reference
    fields populated exactly as submitted.
 
-#### Creating a virtual network with a cross-tenant network class (Tenant Admin)
+#### Creating a virtual network in the single deployment NetworkClass (Tenant Admin)
 
-Starting state: A Cloud Infrastructure Admin has created a NetworkClass named
-`high-perf` in the platform scope.
+Starting state: The provider has configured the single deployment NetworkClass.
+Tenants do not select a NetworkClass for individual VirtualNetworks.
 
 1. The Tenant Admin submits a CreateVirtualNetwork request:
    ```json
    {
      "metadata": { "name": "prod-net" },
      "spec": {
-       "network_class": { "name": "high-perf" },
        "ipv4_cidr": "10.0.0.0/16"
      }
    }
    ```
 
-2. The `network_class` field is a `NetworkClassReference` (full reference).
-   Since NetworkClass is a platform-scoped resource, the interceptor looks it
-   up without tenant filtering.
+2. The server resolves the single deployment NetworkClass and derives the
+   provider/private `implementation_strategy`.
 
-3. The interceptor validates that `high-perf` exists. The server handler
-   validates CIDR format and NetworkClass capabilities (IPv4 support).
+3. The server validates the CIDR format and the resolved manager capabilities.
 
 #### Creating a catalog item referencing a template in another tenant (Cloud Provider Admin)
 
@@ -295,7 +292,7 @@ add new gRPC services, CRDs, webhooks, or finalizers.
 |------|--------|
 | `compute_instance_type.proto` | Add `ComputeInstanceTemplateReference`, `ComputeInstanceCatalogItemReference`, `SubnetLocalReference`, `SecurityGroupLocalReference`. Replace string fields in `ComputeInstanceSpec` and `NetworkAttachment`. Import `InstanceTypeLocalReference` from `instance_type_type.proto`. |
 | `subnet_type.proto` | Add `VirtualNetworkLocalReference`. Replace `SubnetSpec.virtual_network`. |
-| `virtual_network_type.proto` | Add `NetworkClassReference`. Replace `VirtualNetworkSpec.network_class`. |
+| `virtual_network_type.proto` | Remove the tenant-settable `NetworkClassReference`; retain provider/private `implementation_strategy` and validate `VirtualNetworkSpec.ipv4_cidr`. |
 | `security_group_type.proto` | Add `VirtualNetworkLocalReference` (reuse from subnet). Replace `SecurityGroupSpec.virtual_network`. |
 | `external_ip_attachment_type.proto` | Add `ExternalIPLocalReference`, `ComputeInstanceLocalReference`, `ClusterLocalReference`, `BareMetalInstanceLocalReference`. Replace string fields in `ExternalIPAttachmentSpec` oneof. |
 | `external_ip_type.proto` | Add `ExternalIPPoolReference`. Replace `ExternalIPSpec.pool`. |
@@ -334,7 +331,7 @@ structure.
 
 | UI code location | Current wire format | New wire format | Notes |
 |---|---|---|---|
-| `networking.ts` `CreateVirtualNetworkInput.networkClass` | `spec: { network_class: networkClass }` (string) | `spec: { network_class: { name: networkClass } }` | Local var already holds the name |
+| `networking.ts` `CreateVirtualNetworkInput` | `spec: { network_class: networkClass, ipv4_cidr: cidr }` | `spec: { ipv4_cidr: cidr }` | NetworkClass is deployment-resolved; the tenant supplies only the CIDR |
 | `networking.ts` `CreateSubnetInput.virtualNetworkId` | `spec: { virtual_network: virtualNetworkId }` (string) | `spec: { virtual_network: { name: vnetName } }` | Rename variable from `Id` to name-based |
 | `networking.ts` `CreateSecurityGroupInput.virtualNetworkId` | `spec: { virtual_network: virtualNetworkId }` (string) | `spec: { virtual_network: { name: vnetName } }` | Same pattern as Subnet |
 | `networking.ts` `virtualNetworkFilterForSubnetList` | `this.spec.virtual_network == "${id}"` | `this.spec.virtual_network.name == "${name}"` | CEL filter path change |
@@ -469,7 +466,6 @@ resource can be in a different tenant or project from the referencing resource:
 | `PublicIPAttachmentSpec.public_ip` | `PublicIPLocalReference` | Same tenant/project |
 | `PublicIPAttachmentSpec.compute_instance` | `ComputeInstanceLocalReference` | Same tenant/project |
 | `InstanceTypeDeprecation.replacement` | `InstanceTypeLocalReference` | Same scope |
-| `VirtualNetworkSpec.network_class` | `NetworkClassReference` | NetworkClass is platform-scoped (cross-tenant) |
 | `ClusterSpec.template` | `ClusterTemplateReference` | Templates may be shared across tenants |
 | `ClusterSpec.catalog_item` | `ClusterCatalogItemReference` | Catalog items may be shared across tenants |
 | `ClusterNodeSet.host_type` | `HostTypeReference` | HostTypes are platform-scoped |
@@ -861,7 +857,7 @@ database triggers, CLI, UI), and leaves the system fully functional.
 
 | Chunk | Resources | Reference Fields | Rationale |
 |-------|-----------|-----------------|-----------|
-| 1 - Interceptor + Networking | VirtualNetwork, Subnet, SecurityGroup, NetworkClass | `network_class`, `virtual_network` (x3) | Foundation: build interceptor with the simplest reference graph. Networking resources have clear local-reference semantics. |
+| 1 - Interceptor + Networking | VirtualNetwork, Subnet, SecurityGroup, NetworkClass | `virtual_network` (x3) | Foundation: build interceptor with the simplest local networking reference graph. NetworkClass is deployment-resolved and has no tenant reference field. |
 | 2 - Compute | ComputeInstance, ComputeInstanceTemplate, ComputeInstanceCatalogItem, InstanceType | `template`, `catalog_item`, `instance_type`, `subnet`, `security_groups`, `replacement` | Highest user-facing impact. Depends on networking references from Chunk 1. |
 | 3 - IP Management | ExternalIP, ExternalIPPool, ExternalIPAttachment, PublicIP, PublicIPPool, PublicIPAttachment, NATGateway | `pool` (x2), `external_ip` (x2), `public_ip`, `virtual_network`, `compute_instance`, `cluster`, `baremetal_instance` | IP resources have complex oneof targets. |
 | 4 - Clusters + Bare Metal | Cluster, ClusterTemplate, ClusterCatalogItem, BareMetalInstance, BareMetalInstanceCatalogItem, BareMetalInstanceTemplate, HostType | `template` (x2), `catalog_item` (x2), `host_type` (x2) | CaaS and BMaaS services. |

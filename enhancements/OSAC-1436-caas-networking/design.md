@@ -85,22 +85,22 @@ These steps are identical to VMaaS/BMaaS — the networking API is uniform.
 
 1. **Create VirtualNetwork:**
    ```bash
-   osac create virtualnetwork --network-class moc-bm-1 --cidr 10.0.0.0/16 --name my-net
+   osac create virtualnetwork --cidr 10.0.0.0/16 --name my-net
    ```
-   Dispatcher → `osac.templates.{{ fabric_manager }}.create_virtual_network`
+   Dispatcher → the configured network manager's `create_virtual_network` operation
 
 2. **Create Subnet:**
    ```bash
    osac create subnet --virtual-network my-net --cidr 10.0.1.0/24 --name my-subnet
    ```
-   Dispatcher → TWO jobs: fabric_manager creates VLAN/fabric segment + k8s_manager creates CUDN overlay (if deployment hosts VMs)
+   Dispatcher → the configured manager(s) create the subnet backend(s); when both managers are configured, the Fabric Manager creates the fabric segment and the K8s Manager creates the overlay
 
 3. **Create SecurityGroup:**
    ```bash
    osac create security-group --virtual-network my-net --name my-sg \
-     --ingress "protocol:tcp,port:443,source:0.0.0.0/0"
+     --rule "action:allow,direction:ingress,protocol:tcp,port:443,source-cidr:0.0.0.0/0"
    ```
-   Dispatcher → `osac.templates.{{ fabric_manager }}.create_security_group`
+   Dispatcher → the configured network manager's `create_security_group` operation
 
 #### Phase 2: Tenant Creates Cluster
 
@@ -118,7 +118,7 @@ These steps are identical to VMaaS/BMaaS — the networking API is uniform.
     ```
 
 5. **fulfillment-service:**
-    - If `network_attachment` omitted: populates with tenant's default Subnet + default SecurityGroup (see Default Networking PRD)
+    - If `network_attachment` is omitted or an empty message: populates both tenant defaults. If present with only one field, defaults only the missing subnet or SecurityGroup list (see Default Networking PRD)
     - Validates network_attachment:
       - Subnet exists, is Ready
       - SecurityGroups exist, are Ready, belong to same VN
@@ -179,8 +179,8 @@ These steps are identical to VMaaS/BMaaS — the networking API is uniform.
       1. ExternalIP must be Allocated (have an allocated address from the fabric manager)
       2. ClusterOrder must have `status.apiEndpoint` populated (VIP allocated by MetalLB, discovered by template in step 7b)
     - Once both are met: reads ClusterOrder's `apiEndpoint` → 10.0.1.200
-    - Calls `osac.templates.{{ fabric_manager }}.create_external_ip_attachment`
-    - Fabric manager creates DNAT: api-ip (203.0.113.10) → 10.0.1.200
+    - Calls the configured network manager's external-IP attachment operation
+    - The configured network manager creates DNAT: api-ip (203.0.113.10) → 10.0.1.200
     - ExternalIPAttachment transitions from **Pending** to **Ready**
 
 11. Same for ingress ExternalIPAttachment:
@@ -292,8 +292,8 @@ Roles are conventions, not enforced enums. The CaaS template defaults to role `f
 
 ```protobuf
 message ClusterNetworkAttachment {
-  string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, immutable
+  optional string subnet = 1;           // omitted -> tenant default Subnet
+  repeated string security_groups = 2;  // empty -> tenant default SecurityGroup
 }
 // Note: fabric_interface is system-populated ONCE on each node set definition
 // by the fulfillment-service at cluster creation (resolved from the node set's
@@ -321,11 +321,11 @@ message ClusterStatus {
 ```go
 type ClusterOrderSpec struct {
     // ... existing fields ...
-    NetworkAttachment *ClusterNetworkAttachment `json:"networkAttachment,omitempty"`
+    NetworkAttachment *ClusterNetworkAttachment `json:"networkAttachment,omitempty"` // empty message -> both tenant defaults
 }
 
 type ClusterNetworkAttachment struct {
-    SubnetRef         string   `json:"subnetRef"`
+    SubnetRef         string   `json:"subnetRef,omitempty"` // resolved before provisioning
     SecurityGroupRefs []string `json:"securityGroupRefs,omitempty"`
 }
 
@@ -358,7 +358,7 @@ Migration adds to clusters table:
 
 #### Server Validation
 
-- network_attachment: subnet exists, is Ready
+- network_attachment: omitted/empty and partial field defaulting follow the shared contract; every resolved Subnet and SecurityGroup exists, is Ready, and belongs to the same VirtualNetwork
 - Each node set's `baremetal_instance_type` must have at least one `network_ports` entry with `role=fabric` for fabric_interface resolution
 - Immutability: the complete Cluster attachment and every field, including SecurityGroup membership, are immutable after creation; changing network configuration requires deleting and recreating the Cluster
 - target_endpoint validation on ExternalIPAttachment: required when target is cluster, must be `API` or `INGRESS`
@@ -368,9 +368,9 @@ Migration adds to clusters table:
 Catalog Item v2 may govern the singular `network_attachment` field as a whole
 structured value. It may lock the attachment or make it editable with an
 optional default. Catalog resolution occurs before tenant default networking:
-tenant input wins for an editable policy, then the Catalog default, Template
-defaults, and finally the tenant's default Subnet and SecurityGroup are used
-when the attachment remains unset.
+tenant input wins for an editable policy, then the Catalog default and Template
+defaults are applied. Finally, only missing attachment fields receive the
+tenant's default Subnet and SecurityGroup; supplied fields are preserved.
 
 The Catalog Item governs only the tenant-facing Subnet and SecurityGroup
 references. `fabric_interface` is derived separately for each node set from
@@ -410,9 +410,9 @@ changed here.
 | osac-operator ClusterOrder controller | Create namespace/SA/RoleBindings, trigger AAP workflow, aggregate worker status |
 | osac-operator ClusterOrder feedback controller | Watch ClusterOrder status, Signal fulfillment-service when VIPs appear |
 | osac-operator ExternalIPAttachment controller | Read ClusterOrder `apiEndpoint`/`ingressEndpoint` (MetalLB-allocated, template-discovered) from status, create DNAT via fabric_manager |
-| AAP template (ocp_4_17_small) | Create HostedCluster+NodePools, provision MetalLB VIPs, write VIPs to ClusterOrder status, host-side networking handled by DHCP |
+| AAP template (ocp_4_17_small) | Create HostedCluster+NodePools (with pre-selected agents; no agent selection logic), provision MetalLB VIPs, write VIPs to ClusterOrder status, host-side networking handled by DHCP |
 | BMaaS (bare-metal-fulfillment-operator) | Owns full BMI provisioning lifecycle including inventory → OS provisioning → fabric port move (provisioning network → tenant) → reboot → DHCP lease query IP discovery; returns fabric port to provisioning network on BMI deletion |
-| fabric_manager (Ansible role) | move_network_attachment (generic port move, dispatched by BMaaS during BMI provisioning), create/delete_external_ip_attachment (DNAT), create/delete_nat_gateway (SNAT) |
+| configured network manager(s) | Move network attachments where supported, create/delete external-IP attachments (DNAT), and create/delete NATGateway only when the capability is advertised |
 | k8s_manager (Ansible role) | create/delete_subnet (CUDN overlay) — called at subnet creation, NOT at cluster creation |
 
 #### Auto-Provisioned Resource Lifecycle

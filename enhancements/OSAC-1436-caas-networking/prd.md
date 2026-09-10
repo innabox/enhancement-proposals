@@ -19,7 +19,8 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 - A tenant can create a cluster with explicit network configuration, specifying which subnet and security groups to use for cluster nodes
 - A cluster uses a single network attachment — one subnet for all node sets. The system automatically determines which physical interface to use for each node set based on the host type configuration
 - Tenants can request automatic external IP attachment for cluster API server and ingress endpoints with `--external-ip-attachment`, without pre-creating external IP resources
-- When network configuration is omitted, the system applies the tenant's default subnet and security group
+- When the network attachment is omitted or empty, the system applies both
+  tenant defaults; when only one field is missing, only that field is defaulted
 - Cluster status exposes API server and ingress endpoint addresses after provisioning completes
 - The system automatically selects suitable bare-metal hosts and configures network connectivity before cluster provisioning begins
 - Auto-provisioned external IPs and external IP attachments are cleaned up when the cluster is deleted
@@ -66,7 +67,10 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 
 #### Optional Network Configuration with Defaults
 
-- **FR-2:** The network configuration on cluster creation is optional. When omitted, the system applies the tenant's default subnet and default security group. The resolved configuration is stored so the cluster is self-describing after creation. [User]
+- **FR-2:** The network configuration on cluster creation is optional. When
+  omitted or empty, the system applies both tenant defaults. When only one
+  attachment field is missing, only that field is defaulted. The resolved
+  configuration is stored so the cluster is self-describing after creation. [User]
 
 #### Auto External IP
 
@@ -124,7 +128,11 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 ## 6. Assumptions
 
 - The tenant has default networking resources (virtual network, subnet, security group) pre-created. If defaults are not configured, creating a cluster without explicit network configuration fails with a clear error.
-- The deployment's network infrastructure is configured to support virtual networks, subnets, security groups, external IPs, external IP attachments, NAT gateways, and network connectivity management.
+- The deployment's NetworkClass configures at least one manager that supports
+  VirtualNetworks, Subnets, SecurityGroups, ExternalIPs, and
+  ExternalIPAttachments. NATGateway is required only when the configured
+  manager capability advertises it; K8s-only OVN deployments do not support
+  NATGateway.
 - Bare-metal host types have structured network interface configuration. The system uses this to determine which interface to configure for each subnet.
 
 ## 7. Dependencies

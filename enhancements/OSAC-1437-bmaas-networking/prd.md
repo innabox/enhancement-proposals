@@ -18,7 +18,9 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 - A tenant can provision a bare-metal server with one explicit network attachment specifying which physical interface connects to which subnet
 - A tenant can create a bare-metal server with `--external-ip-attachment` and have the system allocate an external IP for inbound access automatically
-- Network attachments are optional — when omitted, the system attaches the server to the tenant's default subnet and security group
+- Network attachments are optional — when omitted or empty, the system
+  attaches the server to the tenant's default subnet and security group; when
+  one field is missing, only that field is defaulted
 - Host types expose available physical network interfaces through the API (name, role, description) for bare-metal servers
 - Network connectivity for the single attachment is established before bare-metal OS provisioning begins
 - External IP attachments support bare-metal servers as a target type
@@ -82,7 +84,14 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Optional Network Attachments with Defaults
 
-- **FR-5:** Network attachments are optional when creating a bare-metal server. When omitted, the system attaches the server to the tenant's default subnet and default security group, using the host type's default interface (see Default Networking PRD). If the host type has no default interface, creating a server without explicit network attachments fails with a clear error. The resolved attachments are stored with the server so the server is self-describing after creation. [User]
+- **FR-5:** Network attachments are optional when creating a bare-metal server.
+  When omitted or empty, the system attaches the server to the tenant's
+  default subnet and default security group, using the host type's default
+  interface. When one field is missing from a supplied attachment, only that
+  field is defaulted. If the host type has no default interface, creating a
+  server without an explicit interface fails with a clear error. The resolved
+  attachment is stored with the server so it is self-describing after
+  creation. [User]
 
 #### Auto External IP
 
@@ -135,7 +144,8 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 ## 6. Assumptions
 
 - The tenant has default networking resources (virtual network, subnet, security group) pre-created at onboarding (see Default Networking PRD). If defaults are not configured, creating a server without explicit network attachments fails with a clear error.
-- The NetworkClass has a fabric manager configured (the system can resolve which network automation to use).
+- The NetworkClass has at least one manager configured that supports BMaaS
+  networking; the implementation strategy is resolved by the provider.
 - The host type for the bare-metal template has a populated physical network interface list. If the list is empty, creating a server with explicit network attachments fails with a clear error.
 - Out-of-band provisioning interfaces (PXE boot, BMC) are reserved for system use and are NOT tenant-attachable (should not appear in network attachments).
 
@@ -144,7 +154,8 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - **Unified Networking EP** — this PRD builds on the unified networking resource model (VirtualNetwork, Subnet, SecurityGroup, ExternalIP, ExternalIPAttachment, NATGateway) defined in the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking)
 - **Default Networking PRD** — default Subnet and SecurityGroup selection behavior defined in [Default Networking PRD](/enhancements/OSAC-1433-default-networking)
 - **Networking manager dispatch** — the system must be able to route networking operations to the correct fabric manager (in progress)
-- **NAT gateway support** — outbound NAT must be available as a networking resource
+- **NAT gateway support** — outbound NAT is available only when the configured
+  manager supports it; K8s-only OVN deployments reject NATGateway
 - **External access for BM targets** — the external IP attachment system must support bare-metal servers as targets
 - **CLI support** — the CLI must support specifying network attachments when creating bare-metal servers
 - **Fabric manager BM networking role** — at least one fabric manager (e.g., Netris) must implement the switch port configuration role for bare-metal servers

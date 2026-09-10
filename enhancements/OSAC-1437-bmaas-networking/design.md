@@ -199,22 +199,22 @@ Same as VMaaS/CaaS — the networking API is uniform.
 
 1. **Create VirtualNetwork:**
    ```bash
-   osac create virtualnetwork --network-class moc --cidr 10.0.0.0/16 --name my-net
+   osac create virtualnetwork --cidr 10.0.0.0/16 --name my-net
    ```
-   Dispatcher → `osac.templates.{{ fabric_manager }}.create_virtual_network`
+   Dispatcher → the configured network manager's `create_virtual_network` operation
 
 2. **Create Subnet:**
    ```bash
    osac create subnet --virtual-network my-net --cidr 10.0.1.0/24 --name my-subnet
    ```
-   Dispatcher → fabric_manager creates VLAN/fabric segment. If the NetworkClass has a k8s_manager: also creates CUDN overlay (but BM doesn't use it — the overlay exists for VMs that may share the same subnet).
+   Dispatcher → the configured manager(s) create the subnet backend(s). BMaaS does not use a K8s overlay, but a combined deployment may create one for VMs sharing the subnet.
 
 3. **Create SecurityGroup:**
    ```bash
    osac create security-group --virtual-network my-net --name my-sg \
-     --ingress "protocol:tcp,port:443,source:0.0.0.0/0"
+     --rule "action:allow,direction:ingress,protocol:tcp,port:443,source-cidr:0.0.0.0/0"
    ```
-   Dispatcher → `osac.templates.{{ fabric_manager }}.create_security_group`
+   Dispatcher → the configured network manager's `create_security_group` operation
 
 #### Phase 2: Tenant Creates BM Server
 
@@ -242,7 +242,9 @@ Same as VMaaS/CaaS — the networking API is uniform.
    ```
 
 5. **fulfillment-service:**
-   - If `network_attachments` omitted: populates with tenant's default Subnet + default SecurityGroup (see [Default Networking PRD](/enhancements/OSAC-1433-default-networking)). The system selects the first interface with role `fabric` from the BareMetalInstanceType as the default interface for the single attachment (matching PRD FR-5).
+   - If `network_attachments` is omitted or empty: populates both tenant defaults (see [Default Networking PRD](/enhancements/OSAC-1433-default-networking)). For a supplied single entry, defaults only missing subnet, SecurityGroup list, or interface. The system selects the first interface with role `fabric` from the BareMetalInstanceType as the default interface.
+     The effective interface source is the BareMetalInstanceType's
+     `network_ports` list.
    - Validates:
      - Each subnet exists, is Ready
      - All subnets belong to the same VirtualNetwork
@@ -294,7 +296,7 @@ Same as VMaaS/CaaS — the networking API is uniform.
    ```bash
    osac create externalip --pool external-pool-1 --name my-ip
    ```
-   Dispatcher → `osac.templates.{{ fabric_manager }}.create_external_ip`
+   Dispatcher → the configured network manager's `create_external_ip` operation
 
 9. **Create ExternalIPAttachment:**
     ```bash
@@ -306,8 +308,8 @@ Same as VMaaS/CaaS — the networking API is uniform.
       1. **ExternalIP must be Allocated** (have an allocated address from the fabric manager)
       2. **BaremetalInstance must have its tenant IP** — reads the single `status.networkAttachmentStatuses[].ipAddress` entry. This IP is written by the operator during `reconcileIPDiscovery` (step 7) and synced to the fulfillment-service via the feedback controller.
     - Once both preconditions are met: writes `osac.openshift.io/target-ip` annotation on the ExternalIPAttachment CR
-    - Calls `osac.templates.{{ fabric_manager }}.create_external_ip_attachment`
-    - Fabric manager creates DNAT rule: external IP → BM's primary subnet IP
+    - Calls the configured network manager's external-IP attachment operation
+    - The configured network manager creates DNAT rule: external IP → BM's primary subnet IP
     - ExternalIPAttachment transitions from Pending to Ready
 
     For auto-provisioned ExternalIPAttachments (`auto_external_ip_attachment=true`), the same flow applies — the attachment is created at API time in Pending state and the controller activates it once the BM's IP becomes known. The wait time depends on `reconcileIPDiscovery` completion (IP discovery by the operator after provisioning completes and the host has received a DHCP lease).
@@ -360,11 +362,10 @@ no internal IP.
 
 ```protobuf
 message BareMetalNetworkAttachment {
-  string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, immutable
-  string interface = 3;                 // optional, immutable: physical interface
-                                        // from BareMetalInstanceType
-  bool primary = 4;                     // the single attachment is implicitly primary
+  optional string subnet = 1;           // omitted -> tenant default Subnet
+  repeated string security_groups = 2;  // empty -> tenant default SecurityGroup
+  string interface = 3;                 // omitted -> first fabric interface
+  optional bool primary = 4;            // the single attachment is implicitly primary
 }
 
 message BareMetalInstanceSpec {
@@ -394,8 +395,8 @@ message BareMetalNetworkAttachmentStatus {
 
 The API intentionally retains the repeated `network_attachments` field rather
 than introducing a singular replacement. Its maximum cardinality is one; an
-omitted list invokes default resolution, while a supplied list must contain
-exactly one valid attachment.
+omitted or empty list invokes default resolution, while a supplied list must
+contain exactly one attachment after field-level defaulting.
 
 #### Operator CRD (bare-metal-fulfillment-operator)
 
@@ -406,10 +407,10 @@ type BareMetalInstanceSpec struct {
 }
 
 type BareMetalNetworkAttachment struct {
-    SubnetRef         string   `json:"subnetRef"`
+    SubnetRef         string   `json:"subnetRef,omitempty"` // resolved before provisioning
     SecurityGroupRefs []string `json:"securityGroupRefs,omitempty"`
     Interface         string   `json:"interface,omitempty"`
-    Primary           bool     `json:"primary,omitempty"` // implicitly true for the single attachment
+    Primary           *bool    `json:"primary,omitempty"` // omitted or true for the single attachment
 }
 
 type BareMetalInstanceStatus struct {
@@ -444,11 +445,12 @@ The `mutateBMI()` function in the fulfillment-service's BM reconciler currently 
 #### Server Validation Rules
 
 - All referenced subnets must belong to the same VirtualNetwork
+- All resolved Subnets and SecurityGroups must exist and be Ready before the BaremetalInstance create is accepted
 - The `interface` must reference a valid port name from the BareMetalInstanceType (its network ports list defines available ports)
 - Interfaces with role `lifecycle` are rejected in `network_attachments` — lifecycle interfaces (PXE boot, BMC) are reserved for the provisioning system and are not tenant-attachable
-- At most one network attachment may be specified
+- At most one network attachment may be specified; omitted or empty input is resolved to one default attachment
+- The single attachment is implicitly primary; omission or `true` is accepted and explicit `false` is rejected
 - If the attachment's `interface` is omitted, it defaults to the first port with `role=fabric` from the BareMetalInstanceType
-- The single attachment is implicitly primary; the `primary` field is not used to select among attachments
 - The attachment list and every field, including Subnet, SecurityGroup membership, interface, and primary designation, are immutable after creation; changing network configuration requires deleting and recreating the BaremetalInstance
 
 #### Catalog Item interaction
@@ -462,10 +464,10 @@ set in the same VirtualNetwork.
 
 Resolution occurs before the tenant default network is applied. A locked list
 rejects conflicting tenant input; an editable list accepts tenant input,
-otherwise uses its Catalog default, Template defaults, and then the tenant's
-default Subnet, SecurityGroup, and default fabric interface when the list is
-still unset. A shared Catalog Item cannot lock or default tenant-local network
-references.
+otherwise uses its Catalog default and Template defaults, then defaults only
+missing fields from the tenant's default Subnet, SecurityGroup, and fabric
+interface. Supplied fields are preserved. A shared Catalog Item cannot lock or
+default tenant-local network references.
 
 The editable policy applies only during BaremetalInstance creation. After
 creation, the resolved attachment list, every network field, and
