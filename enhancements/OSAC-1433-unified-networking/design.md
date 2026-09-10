@@ -3,7 +3,7 @@ title: Unified Networking API for VMaaS, CaaS, and BMaaS
 authors:
   - dmanor@redhat.com
 creation-date: 2026-06-03
-last-updated: 2026-06-10
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-1433
 prd: "prd.md"
@@ -1146,20 +1146,19 @@ k8sManager creates a K8s overlay on each hosting cluster and bridges it to
 the fabric segment. VMs on different hosting clusters share the same subnet
 via the fabric.
 
-#### Hub Selection (CR Placement)
+#### Deployment Topology
 
-The fulfillment-controller creates K8s CRs on a registered hub cluster.
-All networking resources (VirtualNetwork, Subnet, SecurityGroup,
-ExternalIPPool, ExternalIP, ExternalIPAttachment, NATGateway) select a
-hub randomly from the available hubs. Hub selection is sticky — once a
-resource is assigned to a hub via `status.hub`, subsequent reconciliations
-reuse the same hub.
+Each OSAC deployment has exactly one hub cluster. Multi-hub deployments are
+not supported. All networking resources (VirtualNetwork, Subnet,
+SecurityGroup, ExternalIPPool, ExternalIP, ExternalIPAttachment, and
+NATGateway) are reconciled through that hub, and their `status.hub` fields
+identify the deployment's hub.
 
-This design assumes a single-hub deployment. Multi-hub resource placement
-(affinity between related resources, cross-hub CR visibility) is deferred
-as a future design concern. The fabric spans all hosting clusters, so
-AAP-dispatched operations reach the same infrastructure regardless of
-which hub triggers them.
+Hosting clusters are distinct from the hub. Where a `k8sManager` is
+configured, subnet creation provisions the K8s overlay on each hosting cluster
+and bridges it to the fabric segment. VMs on different hosting clusters share
+the same subnet via the fabric; those hosting clusters do not create additional
+hubs.
 
 #### Cross-VN Communication
 

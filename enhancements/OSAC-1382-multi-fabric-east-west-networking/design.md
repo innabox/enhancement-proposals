@@ -3,7 +3,7 @@ title: multi-fabric-east-west-networking
 authors:
   - vromanso@redhat.com
 creation-date: 2026-07-14
-last-updated: 2026-08-11
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-1382
 prd:
@@ -39,6 +39,13 @@ introduced.
 The AAP path for Server Cluster create/delete is already implemented
 (osac-aap PR #447). VPC → Server Cluster in existing VPC → OSAC Subnet
 coexistence and tenant isolation were validated on zeus12.
+
+## Deployment Topology
+
+This design supports exactly one hub cluster per OSAC deployment. Multi-hub
+deployments are not supported. FabricDomain, VirtualNetwork, and Subnet
+resources are reconciled through that hub; the fabric and workload servers
+remain data-plane infrastructure rather than additional hubs.
 
 ## Motivation
 

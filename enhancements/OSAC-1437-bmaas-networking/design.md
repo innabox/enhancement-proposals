@@ -3,7 +3,7 @@ title: bmaas-networking
 authors:
   - dmanor@redhat.com
 creation-date: 2026-07-08
-last-updated: 2026-07-08
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-1437
 prd: "prd.md"
@@ -36,6 +36,14 @@ interface selector; its single attachment is implicitly primary. The
 bare-metal-fulfillment-operator's `reconcileNetworking` phase configures the
 selected switch port via dispatcher, and IP address feedback via CR status
 enables DNAT rule creation. See [PRD](prd.md) for detailed requirements.
+
+## Deployment Topology
+
+This design supports exactly one hub cluster per OSAC deployment. Multi-hub
+deployments are not supported. BareMetalInstance networking resources and
+their associated provisioning CRs follow the unified networking reconciliation
+path through that hub. Bare-metal servers and fabric switches are data-plane
+infrastructure, not additional hubs.
 
 ## Motivation
 
