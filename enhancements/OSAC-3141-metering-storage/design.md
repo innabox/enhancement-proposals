@@ -27,7 +27,7 @@ Meter standalone block Volumes through the existing Watch, projection, reconcili
 The shared metering API currently maps only ComputeInstance and ClusterOrder (`osac-metering/metering-service/internal/events/mapper.go:102-117`), and its Watch filter requests only those payloads (`internal/watch/consumer.go:48-57`). The fulfillment-service private Volume API uses shared `Metadata` that can store a project, but the tenant-cluster storage client to fulfillment-service CreateVolume path currently carries only tenant metadata. The client implementation's `CreateVolumeParams` and gRPC client have no project field (`osac-csi-driver/pkg/fulfillment/volume.go`, `grpc_client.go`), so project breakdown is not implemented in the Volume API request path. The tenant-cluster storage client also passes `ClusterID` without a corresponding Volume API field (`grpc_client.go:53-54`), so parent attribution is an OSAC-984/OSAC-4884 dependency, not an existing fact.
 
 ### Goals
-- Bill logical block capacity while a vendor volume holds it.
+- Bill logical block capacity from `AVAILABLE` until the durable platform deletion request.
 - Make state, quantity, unit, correction, pagination, feature-gate, and adapter behavior deterministic.
 - Preserve tenant isolation, existing meters, and Part 1 retention/deduplication.
 
@@ -177,7 +177,7 @@ DAO transaction/callback failure rolls back object and event. Vendor delete fail
 No new tenant-facing authorization. Volume is private until OSAC-984's tenant API. Fulfillment controls List/Get visibility; operator CRs remain namespace-scoped with existing tenant metadata. OSAC-984 parent fields must be typed, and OSAC-4884 attach/detach operations must use tenant/owner-reference annotations with OPA enforcement.
 
 ### Observability and Monitoring
-Add `osac_metering_feature_enabled` Gauge `{resource_type}`; alert when expected enabled resource is 0. Add `osac_metering_reconciliation_list_no_progress_total` Counter `{resource_type}`; alert on any increase. Add `osac_metering_correction_applied_total` Counter `{provider,resource_type,reason,sign}` and `osac_metering_correction_apply_failures_total` Counter `{provider,resource_type}`; alert on failures in 5m. Keep `osac_metering_reconciliation_corrections_total{reason,resource_type}` and `osac_metering_heartbeat_lag_seconds{resource_type}`; alert lag over two intervals. Alert `osac_metering_dlq_depth{topic}` above zero for 15m and billable `DELETING` age over the configured threshold. Log gate, version, quantity, interval, correction ID, and route.
+Add `osac_metering_feature_enabled` Gauge `{resource_type}`; alert when expected enabled resource is 0. Add `osac_metering_reconciliation_list_no_progress_total` Counter `{resource_type}`; alert on any increase. Add `osac_metering_correction_applied_total` Counter `{provider,resource_type,reason,sign}` and `osac_metering_correction_apply_failures_total` Counter `{provider,resource_type}`; alert on failures in 5m. Keep `osac_metering_reconciliation_corrections_total{reason,resource_type}` and `osac_metering_heartbeat_lag_seconds{resource_type}`; alert lag over two intervals. Alert `osac_metering_dlq_depth{topic}` above zero for 15m and `DELETING` cleanup age over the configured threshold. Log gate, version, quantity, interval, correction ID, and route.
 
 ### Risks and Mitigations
 - Missing mapper/table/checker/loader/filter/gate/route can stop the shared consumer; preflight fails startup.
