@@ -85,6 +85,10 @@ changed by this design. A Catalog Item may resolve a network value at parent
 resource creation time, but that policy does not make the resulting network
 value editable after creation.
 
+East-west networking (`OSAC-1382`) is excluded from this shared contract because
+it is not implemented. Its operation and field semantics remain governed by
+its own design, which may support update and resize operations.
+
 | Network-owned object or field | Allowed user/API operations | Immutability boundary |
 |---|---|---|
 | `NetworkClass` | Create, read, delete | All provider-selected manager and capability configuration in `spec` is fixed after creation. |
@@ -95,7 +99,6 @@ value editable after creation.
 | `ExternalIP` | Create, read, delete | Pool reference, address/allocation identity, and all other network `spec` fields are fixed after creation. |
 | `ExternalIPAttachment` | Create, read, delete | ExternalIP, target, endpoint, and all other binding `spec` fields are fixed after creation; retargeting requires delete and create. |
 | `NATGateway` | Create, read, delete | VirtualNetwork, ExternalIP, and all other gateway `spec` fields are fixed after creation; changing the ExternalIP requires delete and create. |
-| `FabricDomain` (where enabled) | Create, read, delete | Type, server membership, VirtualNetwork association, and all other east-west `spec` fields are fixed after creation; resizing requires delete and create. |
 | `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` | Set on parent create, read with the parent, delete with the parent | The complete attachment list and every entry field, including Subnet, SecurityGroups, and `primary`, are fixed after parent creation. |
 | `Cluster.network_attachment` | Set on parent create, read with the parent, delete with the parent | The complete attachment and every entry field, including Subnet and SecurityGroups, are fixed after parent creation. |
 | `BaremetalInstance.network_attachments` | Set on parent create, read with the parent, delete with the parent | The complete list and every entry field, including Subnet, SecurityGroups, interface, and primary designation, are fixed after parent creation; at most one entry is supported. |
@@ -112,7 +115,8 @@ BaremetalInstance remain governed by their own designs.
 The protobuf wire type alone is not the complete API contract. Every
 network-owned field must also have a defined format, presence/default rule,
 allowed-value set, reference scope, and cross-field validation. The following
-is the canonical contract for the currently supported IPv4 networking surface.
+is the canonical contract for the currently supported north-south IPv4
+networking surface.
 Service-specific designs inherit these rules and add only their attachment
 cardinality or placement constraints.
 
@@ -136,7 +140,6 @@ cardinality or placement constraints.
 | `NetworkClass.spec.k8s_manager` | String reference, optional | Must name a provider-registered K8s manager. Omission is valid for deployments without VM hosting; a VM create request is rejected when it is absent. |
 | `NetworkClass.spec.defaults` | `NetworkDefaults` message, optional in the base API | Required when the Default Networking enhancement is enabled. `virtual_network_cidr` and `ipv4_subnet_cidr` are IPv4 CIDRs; the subnet must be contained by the VN. |
 | `NetworkClass.spec.metallb_vip_prefix_length` | `int32`, optional | Used only for CaaS. When set, it must be a valid IPv4 prefix and more specific than each participating Subnet prefix; the reserved range must remain inside the Subnet. |
-| `NetworkClass.spec.east_west_config` | `EastWestConfig` message, optional | Only the Phase 1 Ethernet configuration is supported. InfiniBand and NVLink configuration is not a supported user value. |
 | `VirtualNetwork.spec.network_class` | Resource reference, required | Must reference the provider NetworkClass for the deployment. Cross-tenant or nonexistent references are rejected. |
 | `VirtualNetwork.spec.ipv4_cidr` | IPv4 CIDR string, required | Must be a canonical IPv4 network CIDR. Cross-tenant CIDR overlap is allowed only because fabric isolation is explicitly relied upon; Subnet overlap within the VN is rejected. |
 | `Subnet.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a VirtualNetwork in the same tenant/project. |
@@ -151,9 +154,6 @@ cardinality or placement constraints.
 | `ExternalIPAttachmentSpec.target_endpoint` | `ExternalIPAttachmentEndpoint` enum | `API` or `INGRESS` is required for a Cluster target. `UNSPECIFIED` is required for ComputeInstance and BaremetalInstance targets. |
 | `NATGateway.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a VirtualNetwork in the same tenant/project; only one NATGateway is allowed per VN. |
 | `NATGateway.spec.external_ip` | Local ExternalIP reference, required | Must reference an allocated, unconsumed ExternalIP in the same tenant/project. |
-| `FabricDomain.spec.type` | `FabricDomainType` enum, required | `ETHERNET_EW` is the only supported Phase 1 value. `INFINIBAND_EW` and `NVLINK` are rejected as unsupported. |
-| `FabricDomain.spec.servers` | Repeated provider server references/hostnames, required | Must be non-empty and contain unique eligible servers. Exact hostname/reference syntax and cross-domain membership rules must be defined by the inventory contract. |
-| `FabricDomain.spec.virtual_networks` | Repeated local VirtualNetwork references, required | Exactly one entry in Phase 1; it must reference a same-tenant VirtualNetwork. |
 
 ### SecurityGroupRule fields
 

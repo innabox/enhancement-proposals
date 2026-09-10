@@ -106,6 +106,10 @@ creation time; changing them requires deleting and recreating the resource (or
 the workload for an attachment field). Deletion may be delayed or rejected
 while dependencies or finalizers remain.
 
+East-west networking (`OSAC-1382`) is excluded from this shared contract because
+it is not implemented. Its design may define update and resize operations until
+that feature has its own implementation and tested contract.
+
 This restriction does not change standard resource metadata semantics or
 Catalog Item definitions and metadata. It also does not restrict updates to
 non-network fields on workload resources. Controllers may update status,
@@ -385,7 +389,7 @@ DNAT target.
 ### Network Operations and Immutability
 
 - [ ] Network resources expose create, read/list, and delete operations only; user/API update, patch, and replace requests for network-owned `spec` fields are rejected or not exposed
-- [ ] All network-owned `spec` fields on NetworkClass, VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool, ExternalIP, ExternalIPAttachment, NATGateway, and FabricDomain are immutable after creation
+- [ ] All network-owned `spec` fields on NetworkClass, VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool, ExternalIP, ExternalIPAttachment, and NATGateway are immutable after creation
 - [ ] `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` are immutable as complete lists, including every attachment field
 - [ ] `Cluster.network_attachment` and `BaremetalInstance.network_attachments` are immutable, including every attachment field
 - [ ] `auto_external_ip_attachment` is immutable after workload creation; changing it requires delete and recreate
@@ -394,6 +398,7 @@ DNAT target.
 - [ ] Changing any network-owned field requires deleting and recreating the affected resource or workload
 - [ ] Controllers can update status, conditions, readiness, IP-discovery results, and finalizers without changing network-owned `spec` fields
 - [ ] Non-network workload fields and Catalog Item definitions and metadata remain governed by their existing designs
+- [ ] East-west networking (`OSAC-1382`) is excluded from this shared operation and field contract until it is implemented and tested
 
 ### External Access
 

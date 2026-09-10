@@ -21,7 +21,7 @@ only. IPv6 and dual-stack networking are not supported.
 
 - Declarative east-west connectivity on Ethernet-based fabrics.
 - Automated multi-tenant isolation on east-west paths, enforced at the fabric level.
-- Ability to create east-west isolation domains for a group of servers — as part of tenant onboarding or as an explicit admin operation. Changing membership requires delete and recreate.
+- Ability to create east-west isolation domains for a group of servers — as part of tenant onboarding, as an explicit admin operation, or when resizing an existing deployment.
 - Visibility into tenant isolation boundaries for auditing and troubleshooting.
 - Integration with the unified networking primitives (EP #50) and compatible with per-service extensions (EP #107).
 
@@ -45,7 +45,7 @@ East-west isolation domains can be provisioned in multiple ways:
 
 1. **During tenant onboarding** — when a new tenant requests high-performance connectivity, the system creates an east-west isolation domain alongside the north-south network as a single operation.
 2. **As an explicit admin operation** — a Cloud Infrastructure Admin creates an isolation domain for a specific set of servers or node groups, independent of tenant creation.
-3. **When membership changes** — the existing isolation domain is replaced with a new domain containing the desired server set; the tenant is not recreated, but the domain is.
+3. **When resizing** — servers are added to or removed from an existing isolation domain without recreating the tenant or the domain.
 
 Regardless of how the domain is created:
 - The fabric manager provisions per-tenant isolation (separate routing domains, no cross-tenant traffic).
@@ -60,7 +60,7 @@ Regardless of how the domain is created:
 
 - As a Cloud Infrastructure Admin, I want to create east-west isolation domains for a group of servers so that tenants get high-performance, isolated connectivity for their workloads.
 
-- As a Cloud Infrastructure Admin, I want to replace an east-west isolation domain with a changed server set so that I can change tenant capacity while preserving the tenant.
+- As a Cloud Infrastructure Admin, I want to add or remove servers from an existing east-west isolation domain so that I can resize tenant deployments without recreating the isolation domain.
 
 ### Cloud Provider Admin
 
@@ -84,7 +84,7 @@ Regardless of how the domain is created:
 - [ ] An east-west isolation domain can be created for a specified set of servers
 - [ ] Each isolation domain belongs to exactly one tenant; cross-tenant membership is rejected
 - [ ] An isolation domain can be created as part of tenant onboarding or as a separate operation
-- [ ] A changed server set is applied by deleting and recreating the isolation domain; no update operation changes an existing domain
+- [ ] Servers can be added to or removed from an existing isolation domain
 - [ ] An isolation domain can be deleted, releasing the server assignments
 
 **Visibility**
