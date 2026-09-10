@@ -168,7 +168,7 @@ enum FabricDomainType {
 
 message FabricDomainSpec {
   FabricDomainType type = 1;             // immutable after creation
-  repeated string servers = 2;           // hostnames (mutable — resize)
+  repeated string servers = 2;           // hostnames, immutable after creation
   repeated string virtual_networks = 3;  // Phase 1: exactly one; immutable after creation
   // NetworkClass is inherited from the associated VirtualNetwork
 }
@@ -191,7 +191,6 @@ service FabricDomains {
   rpc CreateFabricDomain(CreateFabricDomainRequest) returns (FabricDomain);
   rpc GetFabricDomain(GetFabricDomainRequest) returns (FabricDomain);
   rpc ListFabricDomains(ListFabricDomainsRequest) returns (ListFabricDomainsResponse);
-  rpc UpdateFabricDomain(UpdateFabricDomainRequest) returns (FabricDomain);
   rpc DeleteFabricDomain(DeleteFabricDomainRequest) returns (FabricDomain);
   rpc SignalFabricDomain(SignalFabricDomainRequest) returns (FabricDomain);
 }
@@ -225,8 +224,10 @@ message NVLinkEastWestConfig {
 }
 ```
 
-**Immutability:** `type` and `virtual_networks` are immutable after creation.
-Changing them requires delete + re-create. `servers` is mutable (resize).
+**Immutability:** `type`, `servers`, `virtual_networks`, and every other
+FabricDomain `spec` field are immutable after creation. Changing any of them
+requires delete + re-create. `status`, conditions, member state, and
+finalizers remain controller-managed.
 
 **Validation (Phase 1)**
 
@@ -437,7 +438,10 @@ backends later.
 in existing VPC → OSAC Subnet. Four VNets coexisted with distinct VXLAN IDs; no
 conflicts. Same-tenant EW/NS traffic worked; cross-tenant blocked.
 
-Resize = update `servers` → idempotent Server Cluster update.
+Changing server membership requires deleting and recreating the FabricDomain;
+there is no user/API resize or update operation. The replacement flow creates
+the new Server Cluster with the desired membership and then deletes the old
+one, subject to the normal dependency and finalizer checks.
 Delete FabricDomain → delete Server Cluster (VN/VPC unchanged unless empty and
 OSAC-owned).
 
@@ -535,7 +539,7 @@ migration of existing rows required (nullable column, additive).
 
 ### Affected components
 
-- **fulfillment-service:** FabricDomain CRUD + validation; NetworkClass
+- **fulfillment-service:** FabricDomain create/read/delete + validation; NetworkClass
   `east_west_config` + capabilities.
 - **osac-operator:** FabricDomain reconciler; map type → AAP job; resolve
   template from NC; VN → VPC id.
@@ -561,7 +565,6 @@ osac create fabricdomain --type ethernet_ew \
 
 osac get fabricdomains
 osac describe fabricdomain tenant-a-gpu-ew
-osac edit fabricdomain tenant-a-gpu-ew         # resize: update servers list
 osac delete fabricdomain tenant-a-gpu-ew
 ```
 
@@ -609,7 +612,7 @@ cluster by name before creating.
 
 | Persona | FabricDomain | NetworkClass EW config |
 |---------|-------------|------------------------|
-| **Cloud Infrastructure Admin** | Create, read, update, delete | Configure `east_west_config` and capabilities |
+| **Cloud Infrastructure Admin** | Create, read, delete | Configure `east_west_config` and capabilities at NetworkClass creation |
 | **Cloud Provider Admin** | Read (audit/troubleshoot) | Read |
 | **Tenant Admin** | Read own tenant's FabricDomains | Read (discover available capabilities) |
 | **Tenant User** | No direct access | No direct access |
@@ -708,8 +711,9 @@ are not supported.
   on success; `Ready=False` (Reason=ProvisioningFailed) on failure.
 - Per-member status: all members report `ACTIVE` on success; failed members
   report `FAILED` with message.
-- Resize: updating `servers` list triggers re-reconciliation; `type` and
-  `virtual_networks` are immutable after creation.
+- Server membership changes are handled by delete and recreate; no update or
+  re-reconciliation mutates the `servers` list after creation. `type` and
+  `virtual_networks` are immutable as well.
 
 ### Integration Tests
 
@@ -725,8 +729,8 @@ are not supported.
 
 - Full lifecycle on netris-lab: create NetworkClass → create VN → create
   FabricDomain → verify Netris Server Cluster exists in VPC → verify EW
-  isolation (same-tenant ping succeeds, cross-tenant blocked) → resize
-  servers → delete FabricDomain → verify cleanup.
+  isolation (same-tenant ping succeeds, cross-tenant blocked) → delete and
+  recreate with a changed server set → delete FabricDomain → verify cleanup.
 - VNet coexistence: create VPC → Server Cluster → OSAC Subnet → verify
   distinct VXLAN IDs, no conflicts (already validated on zeus12).
 - Error path: create FabricDomain with invalid `template_id` on NetworkClass →
@@ -773,12 +777,12 @@ ServerCluster    (EW fabric isolation — new, top-level peer)
 This variant treats ServerCluster as a top-level resource (not a child of VN)
 that drives **all** fabrics for a given server group in one object. For the
 common uniform case (same 20 servers on Ethernet EW, IB, and NVLink), a single
-ServerCluster avoids server-list drift and provides atomic resize.
+ServerCluster avoids server-list drift and provides atomic replacement.
 
 **Pros:**
 
 - One object per server group — simpler for uniform deployments.
-- Atomic resize: add/remove a server once, all fabrics follow.
+- Atomic replacement: recreate the desired server set once, all fabrics follow.
 - Matches Netris's Server Cluster model directly (one API call provisions
   Ethernet + IB + NVLink via template).
 
@@ -795,7 +799,7 @@ ServerCluster avoids server-list drift and provides atomic resize.
 
 **Why FabricDomain was chosen:** FabricDomain handles both uniform and
 non-uniform cases. For uniform deployments, a Phase 2/3 `type: multi` (or
-equivalent) achieves single-object atomic resize with the same schema. For
+equivalent) achieves single-object atomic replacement with the same schema. For
 non-uniform deployments (SuperPOD-style: storage off NVLink, different NVLink
 partition sizes per job), separate FabricDomains per fabric type are the
 natural model. The NetworkClass already has per-fabric config
@@ -837,8 +841,8 @@ multi-fabric clarity; risks leaking `template_id` into every binding.
 
 | Stage | Criteria |
 |-------|----------|
-| **Dev Preview** | FabricDomain CRUD operations pass unit and integration tests. Condition-based lifecycle verified. NetworkClass `east_west_config` validated. |
-| **Tech Preview** | Full lifecycle E2E on netris-lab: create → isolation verified → resize → delete. VNet coexistence with OSAC Subnets confirmed. Error paths tested (invalid template, missing VN, AAP timeout). No regressions in existing networking tests. |
+| **Dev Preview** | FabricDomain create/read/delete operations pass unit and integration tests. Condition-based lifecycle verified. NetworkClass `east_west_config` validated. |
+| **Tech Preview** | Full lifecycle E2E on netris-lab: create → isolation verified → delete/recreate with a changed server set → delete. VNet coexistence with OSAC Subnets confirmed. Error paths tested (invalid template, missing VN, AAP timeout). No regressions in existing networking tests. |
 | **GA** | Production deployment with ≥2 tenants using FabricDomain for ≥30 days. Support procedures validated. Admin documentation published. No manual fabric-manager intervention required for standard operations. |
 
 ## Upgrade / Downgrade Strategy

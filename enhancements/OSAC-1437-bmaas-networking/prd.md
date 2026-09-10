@@ -69,7 +69,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Network Attachment Specification
 
-- **FR-1:** Tenants can specify at most one network attachment when creating a bare-metal server. The attachment identifies a subnet (required, immutable), security groups (modifiable), and which physical interface to use (optional, immutable). The single attachment is implicitly the default gateway. [User]
+- **FR-1:** Tenants can specify at most one network attachment when creating a bare-metal server. The attachment identifies a subnet, security groups, and which physical interface to use (optional). The complete attachment and every field are immutable after creation; the single attachment is implicitly the default gateway. [User]
 
 #### Host Type Interface Discovery
 
@@ -133,6 +133,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - [ ] Creating a bare-metal server with more than one network attachment returns a single-NIC validation error
 - [ ] Bare-metal server attachment IP is visible in status after network connectivity is configured
 - [ ] External IP attachment with bare-metal server target routes inbound traffic to the server's single attachment IP
+- [ ] Updating or patching `network_attachments`, `auto_external_ip_attachment`, or any attachment field is rejected; network-owned data exposes create, read, and delete only, and changes require delete and recreate
 
 ## 6. Assumptions
 

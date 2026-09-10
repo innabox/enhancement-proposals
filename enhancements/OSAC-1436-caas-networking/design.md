@@ -300,7 +300,7 @@ Roles are conventions, not enforced enums. The CaaS template defaults to role `f
 ```protobuf
 message ClusterNetworkAttachment {
   string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, mutable
+  repeated string security_groups = 2;  // SecurityGroup IDs, immutable
 }
 // Note: fabric_interface is system-populated ONCE on each node set definition
 // by the fulfillment-service at cluster creation (resolved from the node set's
@@ -313,7 +313,7 @@ message ClusterSpec {
   map<string, ClusterNodeSet> node_sets = 3;
   // ... existing fields ...
   ClusterNetworkAttachment network_attachment = 9;   // NEW, optional, singular
-  bool auto_external_ip_attachment = 10;              // NEW, auto-provision ExternalIP + ExternalIPAttachment for API and ingress
+  bool auto_external_ip_attachment = 10;              // NEW, create-time only; auto-provision ExternalIP + ExternalIPAttachment for API and ingress
 }
 
 message ClusterStatus {
@@ -367,7 +367,7 @@ Migration adds to clusters table:
 
 - network_attachment: subnet exists, is Ready
 - Each node set's `baremetal_instance_type` must have at least one `network_ports` entry with `role=fabric` for fabric_interface resolution
-- Immutability: the complete network attachment and all network-owned fields are immutable after creation, including SecurityGroup membership
+- Immutability: the complete Cluster attachment and every field, including SecurityGroup membership, are immutable after creation; changing network configuration requires deleting and recreating the Cluster
 - target_endpoint validation on ExternalIPAttachment: required when target is cluster, must be `API` or `INGRESS`
 
 #### Catalog Item interaction
@@ -386,6 +386,11 @@ lock or default tenant-local network references; it must leave the attachment
 editable or ungoverned. The normal CaaS rules still apply: one attachment per
 Cluster, all node sets share its Subnet, and all referenced objects belong to
 the same VirtualNetwork.
+
+The editable policy applies only during Cluster creation. After creation, the
+resolved attachment and every network-owned field are read-only. Catalog Item
+definitions and metadata remain governed by Catalog Items v2 and are not
+changed here.
 
 #### Template Changes
 
@@ -455,8 +460,8 @@ This feature inherits the existing security model:
 
 No RBAC or tenancy changes. All new resources (Cluster with new fields, auto-provisioned ExternalIP/ExternalIPAttachment) inherit tenant isolation from parent:
 - `osac.openshift.io/tenant` annotation propagated from Cluster to auto-created resources
-- OPA policies enforce tenant-scoped list/get/update/delete
-- Tenant User can view and manage auto-provisioned resources (labeled `osac.openshift.io/auto-created: "true"`) via standard API
+- OPA policies enforce tenant-scoped list/get/create/delete; update and patch of network-owned fields are rejected
+- Tenant User can view auto-provisioned resources (labeled `osac.openshift.io/auto-created: "true"`) via the standard API; their network-owned fields are not editable
 
 ### Observability and Monitoring
 

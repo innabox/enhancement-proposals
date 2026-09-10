@@ -25,8 +25,9 @@ where a single create command produces a reachable instance.
   networking resources
 - Tenants who need custom networking retain the full explicit workflow —
   simplified creation is additive, not a replacement
-- Auto-provisioned networking resources are visible, editable, and follow
-  the same lifecycle as manually created ones
+- Auto-provisioned networking resources are visible and follow the same
+  create/read/delete lifecycle as manually created ones; their network-owned
+  fields are immutable after creation
 
 All default networking resources use IPv4 CIDRs. IPv6 and dual-stack networking
 are not supported.
@@ -62,8 +63,9 @@ are not supported.
 
 ### Tenant Admin Stories
 
-- As a Tenant Admin, I want to inspect and customize my default networking
-  resources (e.g., modify SecurityGroup rules) after they are auto-created
+- As a Tenant Admin, I want to inspect my default networking resources after
+  they are auto-created and know that network-owned fields are fixed at
+  creation time
 
 ### Cloud Infrastructure Admin Stories
 
@@ -92,19 +94,20 @@ are not supported.
   status condition describing the failure. The Cloud Provider Admin can
   inspect the failure and retry by deleting and re-creating the tenant.
   [User]
-- **FR-2:** The Cloud Infrastructure Admin configures default networking
-  parameters (IPv4 CIDR and SecurityGroup rules) on the
-  NetworkClass. Defaults are required — a NetworkClass without defaults
-  is rejected at creation time. [User]
+- **FR-2:** The Cloud Infrastructure Admin supplies default networking
+  parameters (IPv4 CIDR and SecurityGroup rules) when creating the
+  NetworkClass. Defaults are required — a NetworkClass without defaults is
+  rejected at creation time, and the NetworkClass network configuration is
+  immutable thereafter. [User]
 - **FR-3:** All tenants receive the same default IPv4 CIDR ranges as configured
   on the NetworkClass. Tenants are isolated at the
   network level — the unified networking API provides VirtualNetworks
   with any IP subnet, and the system enforces isolation regardless of
   overlapping CIDRs between tenants. [User]
-- **FR-4:** Default resources are labeled as defaults, visible in list
-  and detail views, and editable by the Tenant Admin (e.g., adding
-  SecurityGroup rules). Default resources cannot be deleted while any
-  resource depends on them. [User]
+- **FR-4:** Default resources are labeled as defaults and visible in list and
+  detail views. Their network-owned fields are immutable after creation;
+  update and patch requests are rejected. Default resources cannot be deleted
+  while any resource depends on them. [User]
 - **FR-5:** Creating custom VirtualNetworks does not affect default
   resources — both coexist. [User]
 
@@ -172,8 +175,10 @@ are not supported.
   exist and are READY before the tenant's first resource creation
 - [ ] Default resources appear in list views with a label identifying
   them as defaults
-- [ ] A Tenant Admin can modify default SecurityGroup rules (e.g., add
-  ingress rules) and the changes take effect
+- [ ] Update and patch requests for default network resources and their
+  network-owned fields are rejected; changes require delete and recreate
+- [ ] Standard resource metadata and Catalog Item definitions and metadata
+  remain governed by their existing designs
 - [ ] Deleting a resource with auto-provisioned ExternalIP causes the
   auto-created ExternalIP and ExternalIPAttachment to be cleaned up
   automatically

@@ -363,7 +363,7 @@ no internal IP.
 ```protobuf
 message BareMetalNetworkAttachment {
   string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, mutable
+  repeated string security_groups = 2;  // SecurityGroup IDs, immutable
   string interface = 3;                 // optional, immutable: physical interface
                                         // from BareMetalInstanceType
   bool primary = 4;                     // the single attachment is implicitly primary
@@ -377,8 +377,8 @@ message BareMetalInstanceSpec {
   int64 restart_trigger = 5;
   map<string, google.protobuf.Any> template_parameters = 6;  // immutable
   optional BareMetalInstanceImage image = 7;                  // immutable
-  repeated BareMetalNetworkAttachment network_attachments = 8; // NEW, optional; at most one entry
-  bool auto_external_ip_attachment = 9;  // NEW, auto-provision ExternalIP + ExternalIPAttachment
+  repeated BareMetalNetworkAttachment network_attachments = 8; // NEW, optional; at most one entry; immutable after create
+  bool auto_external_ip_attachment = 9;  // NEW, create-time only; auto-provision ExternalIP + ExternalIPAttachment
 }
 
 message BareMetalInstanceStatus {
@@ -424,8 +424,9 @@ type BareMetalNetworkAttachmentStatus struct {
 
 CEL immutability: `network_attachments` list and every network-owned field are
 immutable after creation, including subnet, SecurityGroup membership, interface,
-and primary designation. BMaaS accepts at most one network attachment, and that
-attachment is implicitly primary.
+and primary designation. `auto_external_ip_attachment` is also create-time only.
+BMaaS accepts at most one network attachment, and that attachment is
+implicitly primary.
 
 CEL validation rule:
 ```yaml
@@ -445,7 +446,7 @@ The `mutateBMI()` function in the fulfillment-service's BM reconciler currently 
 - At most one network attachment may be specified
 - If the attachment's `interface` is omitted, it defaults to the first port with `role=fabric` from the BareMetalInstanceType
 - The single attachment is implicitly primary; the `primary` field is not used to select among attachments
-- network_attachments are immutable after creation
+- The attachment list and every field, including Subnet, SecurityGroup membership, interface, and primary designation, are immutable after creation; changing network configuration requires deleting and recreating the BaremetalInstance
 
 #### Catalog Item interaction
 
@@ -462,6 +463,11 @@ otherwise uses its Catalog default, Template defaults, and then the tenant's
 default Subnet, SecurityGroup, and default fabric interface when the list is
 still unset. A shared Catalog Item cannot lock or default tenant-local network
 references.
+
+The editable policy applies only during BaremetalInstance creation. After
+creation, the resolved attachment list, every network field, and
+`auto_external_ip_attachment` are read-only. Catalog Item definitions and
+metadata remain governed by Catalog Items v2 and are not changed here.
 
 The provisioning network, lifecycle interfaces, port moves, and DHCP lease
 discovery are infrastructure behavior and are never Catalog-governed fields.
@@ -703,8 +709,8 @@ The bare-metal-fulfillment-operator needs additional RBAC permissions: get/list/
 
 All new resources (BaremetalInstance with new fields, auto-provisioned ExternalIP/ExternalIPAttachment) inherit tenant isolation from parent:
 - `osac.openshift.io/tenant` annotation propagated from BaremetalInstance to auto-created resources
-- OPA policies enforce tenant-scoped list/get/update/delete
-- Tenant User can view and manage auto-provisioned resources (labeled `osac.openshift.io/auto-created: "true"`) via standard API
+- OPA policies enforce tenant-scoped list/get/create/delete; update and patch of network-owned fields are rejected
+- Tenant User can view auto-provisioned resources (labeled `osac.openshift.io/auto-created: "true"`) via the standard API; their network-owned fields are not editable
 
 ### Observability and Monitoring
 
@@ -871,7 +877,7 @@ Micro version upgrades (`x.y.N → x.y.N+2`):
 - No user action required
 
 Minor version upgrades (`x.N → x.N+1`):
-- Tenant User encouraged to migrate to new networking fields via CLI update (`osac-cli` supports the single `--network-attachment` flag with `--interface`)
+- Tenant User encouraged to migrate by creating a replacement BaremetalInstance with the new networking fields (`osac-cli` supports the single `--network-attachment` flag with `--interface`); an existing instance's network fields are not updated
 - No breaking changes — networking fields remain optional
 
 ### Downgrade

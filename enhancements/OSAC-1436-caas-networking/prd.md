@@ -65,7 +65,7 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 
 #### Network Configuration
 
-- **FR-1:** Cluster creation supports a single network attachment configuration specifying a subnet (required, immutable) and security groups (mutable). The attachment applies to the entire cluster — all node sets share the same subnet. The system determines which physical network interface to use for each node set based on its host type's interface configuration. [User]
+- **FR-1:** Cluster creation supports a single network attachment configuration specifying a subnet and security groups. The attachment applies to the entire cluster — all node sets share the same subnet. The system determines which physical network interface to use for each node set based on its host type's interface configuration. The complete attachment and every field, including security groups, are immutable after creation; changing them requires deleting and recreating the Cluster. [User]
 
 #### Optional Network Configuration with Defaults
 
@@ -122,6 +122,7 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 - [ ] Auto-created external IPs and external IP attachments are labeled as auto-provisioned and visible in list views
 - [ ] Deleting a cluster with auto-provisioned resources causes the auto-created external IPs and external IP attachments to be cleaned up
 - [ ] The system determines which physical network interface to use based on the host type's interface configuration
+- [ ] Updating or patching the Cluster network attachment or any of its fields is rejected; the network operation contract exposes create, read, and delete only for network-owned data
 
 ## 6. Assumptions
 

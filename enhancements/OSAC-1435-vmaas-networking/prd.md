@@ -41,7 +41,7 @@ Tenants cannot create VMs with multiple network interfaces or designate which in
 
 ### Tenant Admin Stories
 
-- As a Tenant Admin, I want to inspect and modify the default networking resources (subnet, security group) used when VMs are created without explicit network configuration
+- As a Tenant Admin, I want to inspect the default networking resources (subnet, security group) used when VMs are created without explicit network configuration
 - As a Tenant Admin, I want to see which subnet and security groups each VM is attached to, and the IP address allocated to each interface, so I can audit my organization's network topology
 
 ### Cloud Infrastructure Admin Stories
@@ -81,6 +81,13 @@ Tenants cannot create VMs with multiple network interfaces or designate which in
 
 - **FR-7:** Existing VMs continue to work without changes. The platform accepts both old and new network configuration formats during a transition period. If both formats are provided, the create request fails with an error. If the old format is provided alone, it is converted to the new format automatically. [User]
 
+- **FR-8:** The complete resolved network attachment list on a ComputeInstance,
+  including every Subnet, SecurityGroup, and `primary` value, is immutable
+  after creation. Update and patch requests for these fields are rejected;
+  changing network configuration requires deleting and recreating the VM.
+  Standard metadata and non-network VM fields remain governed by their own
+  contracts. [User]
+
 ### 4.2 Non-Functional Requirements
 
 - **NFR-1:** Auto external IP allocation completes synchronously within the create request. If no pool has available capacity, the create request fails with a clear error. [User]
@@ -97,6 +104,7 @@ Tenants cannot create VMs with multiple network interfaces or designate which in
 - [ ] Deleting a VM with auto-provisioned external IP causes the auto-created IP and attachment to be cleaned up automatically
 - [ ] Creating a VM using the old network configuration format succeeds and is internally converted to the new format
 - [ ] Creating a VM with both old and new configuration formats returns an error
+- [ ] Updating or patching a VM's network attachment list or any attachment field is rejected; changing it requires delete and recreate
 
 ## 6. Assumptions
 

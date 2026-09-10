@@ -54,7 +54,7 @@ ComputeInstance already participates in the networking API. Today's flow:
 ### What Already Works
 
 - `network_attachments` field exists on ComputeInstanceSpec (field 14)
-- Operator CRD has `NetworkAttachments []NetworkAttachment` with CEL immutability rules (subnet refs immutable, security group refs mutable)
+- Operator CRD has `NetworkAttachments []NetworkAttachment` with CEL immutability rules (the complete list and every network field are immutable)
 - Subnet-to-namespace resolution is implemented
 - The template creates VMs in the correct namespace
 - ExternalIPAttachment with `compute_instance` target works end-to-end
@@ -199,7 +199,7 @@ Replace the shared `NetworkAttachment` with `ComputeNetworkAttachment`:
 ```protobuf
 message ComputeNetworkAttachment {
   string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, mutable
+  repeated string security_groups = 2;  // SecurityGroup IDs, immutable
   bool primary = 3;                     // immutable, designates default gateway
 }
 
@@ -207,7 +207,7 @@ message ComputeInstanceSpec {
   // ... existing fields ...
   // DEPRECATED: field 14 (old shared NetworkAttachment)
   repeated ComputeNetworkAttachment compute_network_attachments = 18; // optional
-  bool auto_external_ip_attachment = 19;  // NEW, auto-provision ExternalIP + ExternalIPAttachment
+  bool auto_external_ip_attachment = 19;  // NEW, create-time only; auto-provision ExternalIP + ExternalIPAttachment
 }
 
 message ComputeNetworkAttachmentStatus {
@@ -224,8 +224,9 @@ message ComputeInstanceStatus {
 
 #### Operator CRD (osac-operator)
 
-Update `ComputeInstanceSpec.NetworkAttachments` struct:
-- Add `Primary bool` field with CEL immutability validation
+Define/extend `ComputeInstanceSpec.NetworkAttachments` with:
+- `Primary bool` field with CEL immutability validation
+- CEL immutability validation for the complete attachment list and every entry field
 - Add validation: if >1 attachment, exactly one must be `primary: true`
 - `PrimarySubnetRef()` returns the attachment with `primary: true` (falls back to first attachment for backward compat)
 
@@ -271,6 +272,12 @@ rejects conflicting tenant input. An editable list accepts tenant input,
 otherwise uses its Catalog default, then the Template default, and finally the
 tenant's default Subnet and SecurityGroup when the attachment list remains
 unset.
+
+The editable policy applies only while creating the ComputeInstance. After
+creation, the complete resolved attachment list and every network field are
+read-only; changing them requires deleting and recreating the VM. Catalog Item
+definitions and metadata remain governed by Catalog Items v2 and are not
+changed here.
 
 The Catalog list must obey the same Compute rules as direct creation: all
 attachments belong to one VirtualNetwork, one attachment is implicit primary
@@ -353,7 +360,7 @@ This feature inherits the existing security model:
 
 No RBAC or tenancy changes. All new resources (ComputeInstance with new fields, auto-provisioned ExternalIP/ExternalIPAttachment) inherit tenant isolation from parent:
 - `osac.openshift.io/tenant` annotation propagated from ComputeInstance to auto-created resources
-- OPA policies enforce tenant-scoped list/get/update/delete
+- OPA policies enforce tenant-scoped list/get/create/delete; update and patch of network-owned fields are rejected
 - Tenant User can view and manage auto-provisioned resources (labeled `osac.openshift.io/auto-provisioned: "true"`) via standard API
 
 ### Observability and Monitoring
@@ -480,7 +487,7 @@ Micro version upgrades (`x.y.N → x.y.N+2`):
 
 Minor version upgrades (`x.N → x.N+1`):
 - Deprecation warning added for old `network_attachments` field (field 14) in fulfillment-service API responses
-- Tenant User encouraged to migrate to new field via CLI update (`osac-cli` supports new `--network-attachment` flag with `--primary`)
+- Tenant User encouraged to migrate by creating a replacement VM with the new field (`osac-cli` supports new `--network-attachment` flag with `--primary`); the existing VM's network fields are not updated
 - No breaking changes — old field remains functional
 
 ### Downgrade

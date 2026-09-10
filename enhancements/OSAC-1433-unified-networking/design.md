@@ -70,6 +70,43 @@ For user stories, goals, and non-goals, see the
 > supported. The remainder of this document describes the desired-state
 > architecture.
 
+## Supported Operations and Immutability
+
+This section defines the user/API operation contract for network-owned data.
+Every network resource is create/read/delete-only: callers may create it, list
+or get it, and delete it subject to dependency and finalizer checks. There is
+no user/API update, patch, or replace operation for a network resource's
+network-owned `spec` fields. A change to those fields requires deleting the
+resource and creating a new one.
+
+The contract is deliberately limited to network-owned data. Standard resource
+metadata semantics, including Catalog Item definitions and metadata, are not
+changed by this design. A Catalog Item may resolve a network value at parent
+resource creation time, but that policy does not make the resulting network
+value editable after creation.
+
+| Network-owned object or field | Allowed user/API operations | Immutability boundary |
+|---|---|---|
+| `NetworkClass` | Create, read, delete | All provider-selected manager and capability configuration in `spec` is fixed after creation. |
+| `VirtualNetwork` | Create, read, delete | NetworkClass reference, CIDR/address-family, and all other network `spec` fields are fixed after creation. |
+| `Subnet` | Create, read, delete | VirtualNetwork reference, CIDR/address-family, and all other network `spec` fields are fixed after creation. |
+| `SecurityGroup` | Create, read, delete | VirtualNetwork reference and the complete rule set are fixed after creation; rules must be supplied at create time. |
+| `ExternalIPPool` | Create, read, delete | Address-family, CIDR ranges, and all other pool `spec` fields are fixed after creation. |
+| `ExternalIP` | Create, read, delete | Pool reference, address/allocation identity, and all other network `spec` fields are fixed after creation. |
+| `ExternalIPAttachment` | Create, read, delete | ExternalIP, target, endpoint, and all other binding `spec` fields are fixed after creation; retargeting requires delete and create. |
+| `NATGateway` | Create, read, delete | VirtualNetwork, ExternalIP, and all other gateway `spec` fields are fixed after creation; changing the ExternalIP requires delete and create. |
+| `FabricDomain` (where enabled) | Create, read, delete | Type, server membership, VirtualNetwork association, and all other east-west `spec` fields are fixed after creation; resizing requires delete and create. |
+| `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` | Set on parent create, read with the parent, delete with the parent | The complete attachment list and every entry field, including Subnet, SecurityGroups, and `primary`, are fixed after parent creation. |
+| `Cluster.network_attachment` | Set on parent create, read with the parent, delete with the parent | The complete attachment and every entry field, including Subnet and SecurityGroups, are fixed after parent creation. |
+| `BaremetalInstance.network_attachments` | Set on parent create, read with the parent, delete with the parent | The complete list and every entry field, including Subnet, SecurityGroups, interface, and primary designation, are fixed after parent creation; at most one entry is supported. |
+| `auto_external_ip_attachment` on ComputeInstance, Cluster, and BaremetalInstance | Set on parent create, read with the parent, delete with the parent | This network-owned create-time switch is fixed after parent creation; changing automatic external access requires delete and recreate. |
+
+Controllers may update `status`, conditions, readiness and IP-discovery
+results, and may add or remove finalizers as part of reconciliation. Those
+controller-owned transitions are not user/API updates to network-owned
+`spec` fields. Non-network fields on ComputeInstance, Cluster, and
+BaremetalInstance remain governed by their own designs.
+
 ## Proposal
 
 ### NetworkClass
@@ -527,9 +564,11 @@ resulting side effect remains resource-specific: one automatically attached
 ExternalIP for Compute and Bare Metal, and the API and ingress ExternalIPs for
 Cluster.
 
-Catalog governance ends after the resource is created. Later resource updates
-follow the networking lifecycle rules below; in particular, immutable
-attachment structure is distinct from mutable SecurityGroup membership.
+Catalog governance ends after the resource is created. The resolved network
+value is immutable after creation, including the SecurityGroup membership.
+Later changes require deleting and recreating the parent resource. Catalog
+Item definitions and metadata remain governed by the Catalog Items design and
+are outside this networking change.
 
 See [Catalog Items v2](/enhancements/OSAC-3538-catalog-items-v2/design.md)
 for the typed policy representation and reference lifecycle.
@@ -869,17 +908,16 @@ interfaces, but BMaaS does not attach them to the tenant network.
 
 Each resource type has its own network attachment message. The core fields
 (`subnet`, `security_groups`) are shared, but each type adds
-resource-specific fields. The attachment list or singular attachment,
-subnet, interface, and primary designation are immutable after resource
-creation. SecurityGroup membership remains mutable where the resource-specific
-design permits it.
+resource-specific fields. The attachment list or singular attachment and
+every field in every entry are immutable after resource creation, including
+SecurityGroup membership.
 
 **ComputeNetworkAttachment** (for ComputeInstance):
 
 ```protobuf
 message ComputeNetworkAttachment {
   string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, optional, mutable
+  repeated string security_groups = 2;  // SecurityGroup IDs, optional, immutable
   bool primary = 3;                     // optional, immutable: designates default gateway
 }
 ```
@@ -893,7 +931,7 @@ for primary designation and default gateway semantics.
 ```protobuf
 message BareMetalNetworkAttachment {
   string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, optional, mutable
+  repeated string security_groups = 2;  // SecurityGroup IDs, optional, immutable
   string interface = 3;                 // optional, immutable: physical port name from BareMetalInstanceType
   bool primary = 4;                     // the single attachment is implicitly primary
 }
@@ -910,7 +948,7 @@ does not imply support for multiple tenant network attachments.
 ```protobuf
 message ClusterNetworkAttachment {
   string subnet = 1;                    // Subnet ID, required, immutable
-  repeated string security_groups = 2;  // SecurityGroup IDs, optional, mutable
+  repeated string security_groups = 2;  // SecurityGroup IDs, optional, immutable
 }
 ```
 
@@ -1317,10 +1355,9 @@ time. Creates ambiguous subnet state and complicates the tenant experience.
    internet-connected deployments.
 
 9. **Attachment immutability.** Attachment cardinality, Subnet, interface,
-   and primary designation are immutable after resource creation. SecurityGroup
-   membership remains mutable where the resource-specific design permits it.
-   Changing the immutable attachment structure requires recreating the
-   resource.
+   primary designation, SecurityGroup membership, and every other
+   network-attachment field are immutable after resource creation. Changing
+   any of them requires deleting and recreating the resource.
 
 10. **Security enforcement.** The fabric is the single enforcement point
     for SecurityGroups. No separate K8s-level ACL needed — VMs are on the
