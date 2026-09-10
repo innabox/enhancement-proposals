@@ -64,6 +64,8 @@ Operator feedback is the single writer of output-only `state_transition_time` on
 4. Fulfillment durably records `metadata.deletion_timestamp` and effective state `DELETING` in one versioned mutation. The resulting `OBJECT_UPDATED` event includes both fields; no timestamp-only `AVAILABLE -> AVAILABLE` update is used for deletion. That event closes the metering interval. The operator then deletes the vendor volume, writes `phase=Deleted`, and retains both finalizers until cleanup succeeds. Feedback writes proto `DELETED`; a later reconcile removes the resource finalizer. Vendor cleanup after the deletion request is not part of the initial usage interval.
 5. A feature-gate rollout must be applied before enabling the Watch clause; disabling freezes this resource meter as described below.
 
+For a deletion-request event, the Volume mapper uses `metadata.deletion_timestamp` as the close boundary regardless of `state_transition_time`. For every other state transition, it uses `state_transition_time`. The mapper emits at most one close for a resource version.
+
 ### API Extensions
 - Add private output-only `VolumeStatus.state_transition_time`; operator feedback stamps it on actual state changes, and fulfillment persists it unchanged.
 - Define the project propagation contract before implementation: add `CreateVolumeParams.Project`; the tenant-cluster storage client may forward an `osac.project` request value, and fulfillment-service validates it against the authenticated tenant and persists it as `Metadata.project`. Preserve it on retries and reject a retry whose project differs from the existing named Volume. The Volume mapper and reconciliation loader read this metadata field; they do not infer project from parent or PVC names. Empty means the tenant default. No Volume event is admitted as project-attributed until this contract and its tests are complete.
@@ -224,8 +226,8 @@ Existing Postgres, Kafka/AMQ Streams, fulfillment Watch, and metering are requir
 
 ## Provenance
 
-Committed: commit @ design 0.9.0 - 562b610, workspace main @ f972f40
+Committed: commit @ design 0.9.0 - ae9e30e, workspace main @ ca86831
 
 > Authoring phases not recorded this session (commit-time snapshot only).
 
-<!-- ai-workflow-provenance:{"schema_version":1,"provenance_kind":"commit_only","workflow":"design","workflow_version":"0.9.0","ai_workflows":"562b610","source_repo":"f972f40","source_repo_branch":"main","commits_behind_main":0,"commits_ahead_main":115,"main_ref":"main","phases":["commit"],"authoring_modes":["commit"],"context_changed":true,"origin_untracked":false} -->
+<!-- ai-workflow-provenance:{"schema_version":1,"provenance_kind":"commit_only","workflow":"design","workflow_version":"0.9.0","ai_workflows":"562b610","source_repo":"ca86831","source_repo_branch":"main","commits_behind_main":0,"commits_ahead_main":2,"main_ref":"main","phases":["commit"],"authoring_modes":["commit"],"context_changed":true,"origin_untracked":false} -->
