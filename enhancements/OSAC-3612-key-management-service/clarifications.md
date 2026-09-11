@@ -227,3 +227,21 @@ Key lifecycle operations report success or an actionable failure, do not leave u
 ## Remaining Gaps
 
 None. Detailed platform default selection, fallback mechanics, and audit implementation belong in the design while preserving the locked user-facing decisions above.
+
+## Post-Review Decisions — 2026-09-11
+
+### Decision (D12): Tenant lifecycle authority
+
+Key lifecycle management remains limited to Tenant Admins for this feature. Tenant Users do not receive direct key lifecycle authority. This reaffirms D2.
+
+### Decision (D13): Stable consumer associations
+
+Consumers associate with a stable logical key rather than a specific key version. Successful rotation promotes a new active version without requiring consumers to update their association, while prior versions remain available where needed for existing encrypted data. This refines D4 and D5.
+
+### Decision (D14): Association visibility
+
+Tenant Admins can see a key's lifecycle state and active version. Proactive visibility into associated consumers, detailed consumer names and types, and last-used timestamps is not required. Safe destruction is enforced by rejecting destruction with an actionable explanation when the key remains in use. This supersedes D9.
+
+### Decision (D15): Audit scope
+
+Explicit audit-history requirements are removed from this feature because the platform does not currently provide the required audit-log capability. Cloud Infrastructure Admin health and availability responsibilities from D7 remain; the audit-history portion of D7 and D11 is superseded. The success, actionable-failure, and unambiguous-state guarantees from D11 remain.
