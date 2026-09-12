@@ -24,7 +24,7 @@ Default networking provides automatic resource provisioning at tenant onboarding
 
 ## Summary
 
-This document is a per-service expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md), providing default networking automation and simplified resource creation. When a tenant is created, the system provisions a default VirtualNetwork, IPv4 Subnet, and SecurityGroup, plus a NATGateway only when the NetworkClass supports it. The deployment-wide permit baseline is provider-owned and is always evaluated; it is not the tenant default SecurityGroup's rule set. The tenant default SecurityGroup is the fallback attachment when a workload does not supply SecurityGroups. Resources (ComputeInstance, Cluster, BaremetalInstance) can omit their resource-specific network attachment field and use tenant defaults. For BMaaS, default resolution produces one tenant network attachment on one physical NIC; BMaaS does not support multi-NIC or multi-homed attachments. Auto ExternalIP modes enable fully connected resources in a single API call. See [PRD](prd.md) for detailed requirements.
+This document is a per-service expansion of the [Unified Networking EP](/enhancements/OSAC-1433-unified-networking/design.md), providing default networking automation and simplified resource creation. When a tenant is created, the system provisions a default VirtualNetwork, IPv4 Subnet, and SecurityGroup, plus a NATGateway only when the NetworkClass supports it. The deployment-wide baseline policy is provider-owned and is always evaluated with its configured `permit` or `deny` action; it is not the tenant default SecurityGroup's rule set. The tenant default SecurityGroup is the fallback attachment when a workload does not supply SecurityGroups. Resources (ComputeInstance, Cluster, BaremetalInstance) can omit their resource-specific network attachment field and use tenant defaults. For BMaaS, default resolution produces one tenant network attachment on one physical NIC; BMaaS does not support multi-NIC or multi-homed attachments. Auto ExternalIP modes create Pending records synchronously and complete allocation and activation asynchronously. See [PRD](prd.md) for detailed requirements.
 Shared field types, formats, presence rules, allowed values, and validation
 are defined by the [Unified Networking field contract](/enhancements/OSAC-1433-unified-networking/design.md#field-types-formats-and-validation).
 
@@ -56,7 +56,7 @@ SecurityGroup rule evaluation is defined by the [Unified Networking
 SecurityGroup rule semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics).
 Default networking creates the tenant fallback SecurityGroup. It may have an
 empty tenant rule list because the deployment-wide baseline policy supplies
-the default permit behavior.
+the configured default action.
 
 ### Catalog Item interaction
 
@@ -127,7 +127,7 @@ ExternalIP provisioning.
    - **fulfillment-service** creates Tenant record, then creates default networking resources through its own API (same path as tenant-created resources — persisted in PostgreSQL, reconciled to K8s CRs):
      - Creates default VirtualNetwork with label `osac.openshift.io/default: "true"`, using CIDR from NetworkClass defaults
      - Creates default IPv4 Subnet with label `osac.openshift.io/default: "true"`, using `ipv4SubnetCIDR` from NetworkClass defaults
-     - Creates default SecurityGroup with label `osac.openshift.io/default: "true"`; this is the tenant fallback group and does not define the deployment-wide permit baseline
+     - Creates default SecurityGroup with label `osac.openshift.io/default: "true"`; this is the tenant fallback group and does not define the deployment-wide baseline policy
      - If the NetworkClass advertises `natGateway: true`, creates a default NATGateway with an auto-allocated ExternalIP on the default VirtualNetwork, labeled `osac.openshift.io/default: "true"`; in K8s-only OVN mode, NATGateway is unsupported and is not created
    - Reads NetworkClass defaults configuration (single NetworkClass per deployment)
    - Default resources go through the normal reconciliation path: fulfillment-service reconciler pushes CRs → osac-operator networking controllers dispatch to fabric/k8s managers → resources transition to READY
@@ -364,7 +364,7 @@ an alternative resource or attachment contract.
 - `virtual_network_cidr` must be canonical IPv4 CIDR notation
 - `ipv4_subnet_cidr` must be canonical IPv4 CIDR notation and within `virtual_network_cidr`
 - `metallb_vip_prefix_length` has no universal default and is required only when CaaS/MetalLB VIP support is advertised
-- The deployment-wide permit baseline is provider-owned and is not stored in the tenant default SecurityGroup
+- The deployment-wide baseline policy is provider-owned, has a configured `permit` or `deny` action, and is not stored in the tenant default SecurityGroup
 
 **Resource creation with optional network attachments:**
 - For ComputeInstance, if `compute_network_attachments` is omitted or empty, resolve both the tenant's default Subnet and SecurityGroup (labeled `osac.openshift.io/default: "true"`). A supplied list may contain at most one entry; default only that entry's missing subnet or missing/empty SecurityGroup list, and reject a second entry.
@@ -399,7 +399,8 @@ an alternative resource or attachment contract.
   ExternalIP.
 - The tenant fallback SecurityGroup is the one exception to the tenant
   SecurityGroup rule-count requirement: it may have an empty rule list because
-  the provider-owned deployment baseline permit is always evaluated. A
+  the provider-owned deployment baseline policy is always evaluated with its
+  configured `permit` or `deny` action. A
   tenant-created non-default SecurityGroup still requires at least one valid
   rule.
 - In K8s-only mode, onboarding must not attempt to create a NATGateway. The
@@ -514,14 +515,15 @@ This feature inherits the existing security model:
 - Auto-provisioned resources (ExternalIP, ExternalIPAttachment) inherit tenant annotation from parent resource
 - Default resources (VN, Subnet, SG, NATGateway) inherit tenant annotation from Tenant resource
 - No new authentication or authorization changes
-- The deployment-wide baseline policy permits traffic by default for all tenants; it remains active regardless of the selected tenant SecurityGroup
+- The deployment-wide baseline policy uses its configured `permit` or `deny` default action for all tenants; it remains active regardless of the selected tenant SecurityGroup
 - The tenant fallback SecurityGroup is fixed at creation; replacing it requires delete and recreate after dependencies are removed
 
-**Risk: Deployment baseline too permissive**
-- Mitigation: The deployment-wide baseline is intentionally permissive and is
-  evaluated together with tenant rules. A more-specific tenant `deny` rule can
-  override it. The tenant fallback SecurityGroup is only the default
-  attachment and is not the source of the baseline policy.
+**Risk: Deployment baseline policy is misconfigured**
+- Mitigation: The deployment-wide baseline is provider-owned and its configured
+  `permit` or `deny` action is reviewed as deployment policy. It is evaluated
+  together with tenant rules, and the most-specific matching tenant rule wins.
+  The tenant fallback SecurityGroup is only the default attachment and is not
+  the source of the baseline policy.
 
 ### Failure Handling and Recovery
 
@@ -578,11 +580,11 @@ No new metrics or alerts (existing provisioning duration and failure rate metric
 
 **Reviewed by:** Cloud Provider Admin
 
-#### Risk: Default SecurityGroup too permissive
+#### Risk: Deployment baseline policy is misconfigured
 
-**Impact:** All tenants receive the same deployment-wide permit baseline. If
-the tenant does not attach more-specific deny rules, resources remain broadly
-reachable.
+**Impact:** All tenants receive the same deployment-wide baseline policy. Its
+configured `permit` or `deny` action can affect reachability whenever no
+more-specific tenant rule matches.
 
 **Mitigation:** Rule evaluation follows the [Unified Networking SecurityGroup
 rule semantics](/enhancements/OSAC-1433-unified-networking/design.md#securitygroup-rule-semantics).

@@ -100,8 +100,9 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
   parameters (IPv4 VN and Subnet CIDRs) when creating the single deployment
   NetworkClass. A NetworkClass without `defaults` is rejected at creation
   time, and the NetworkClass network configuration is immutable thereafter.
-  The deployment-wide baseline permit policy is always present and is separate
-  from the tenant fallback SecurityGroup. [User]
+  The deployment-wide baseline policy is always present, uses its configured
+  `permit` or `deny` default action, and is separate from the tenant fallback
+  SecurityGroup. [User]
 - **FR-3:** All tenants receive the same default IPv4 CIDR ranges as configured
   on the NetworkClass. Tenants are isolated at the
   network level — the unified networking API provides VirtualNetworks
@@ -131,23 +132,24 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 
 - **FR-8:** ComputeInstance and BaremetalInstance support
   `--external-ip-attachment`. When enabled, the system selects the
-  available ExternalIPPool with the most capacity, allocates an
-  ExternalIP, and creates an ExternalIPAttachment binding it to the
-  resource. The system selects the pool with the most available capacity
-  using IPv4. When multiple
-  pools have equal capacity, selection is deterministic but unspecified.
-  [User]
+  available IPv4 ExternalIPPool with the most capacity, reserves capacity,
+  and creates a Pending ExternalIP and ExternalIPAttachment binding it to the
+  resource. Fabric allocation, target IP discovery, DNAT programming, and
+  the `Pending -> Allocated` / `Pending -> Ready` transitions are
+  asynchronous. When multiple pools have equal capacity, selection is
+  deterministic but unspecified. [User]
 - **FR-9:** Cluster supports `--external-ip-attachment`. When enabled,
-  the system allocates two ExternalIPs and creates two
-  ExternalIPAttachments — one for the API server and one for ingress.
-  [User]
-- **FR-10:** For clusters, ExternalIPs are allocated before provisioning
-  begins, resolving the ordering requirement that cluster nodes need
-  external access during setup. ExternalIPAttachments are created in an
-  inactive state and activate once the cluster's endpoint addresses are
-  available. [User]
+  the system reserves capacity and creates two Pending ExternalIPs and two
+  Pending ExternalIPAttachments — one pair for the API server and one for
+  ingress. Fabric allocation, endpoint discovery, and DNAT programming are
+  asynchronous. [User]
+- **FR-10:** For clusters, the Pending ExternalIP and ExternalIPAttachment
+  records are created before provisioning begins. ExternalIPs transition to
+  `Allocated` when the manager assigns addresses, and attachments transition
+  to `Ready` only after the cluster endpoint addresses are available and
+  inbound routing succeeds. [User]
 - **FR-11:** Auto-created ExternalIP and ExternalIPAttachment resources
-  are labeled as auto-provisioned. When the parent resource is deleted,
+  are labeled with `osac.openshift.io/auto-created: "true"`. When the parent resource is deleted,
   the system deletes auto-created ExternalIPAttachments first, then
   ExternalIPs, before the parent resource is removed. If cleanup of
   auto-created resources fails permanently, the parent resource is still
@@ -227,8 +229,13 @@ and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/desig
 ### 7.2 Default SecurityGroup too permissive
 
 - **Owner:** Cloud Infrastructure Admin
-- **Mitigation:** Cloud Infrastructure Admin configures default rules on
-  NetworkClass; Tenant Admin can tighten rules after creation
+- **Mitigation:** The deployment baseline policy is provider-owned and is
+  always evaluated, with its configured default action (`permit` or `deny`)
+  applying when no more-specific rule matches. The tenant default
+  SecurityGroup is a separate tenant-scoped fallback used only when an
+  attachment omits an explicit SecurityGroup. It is immutable after creation;
+  tenants must create or select another SecurityGroup rather than tightening
+  its rules in place.
 
 ### 7.3 Auto ExternalIP orphans on partial failure
 

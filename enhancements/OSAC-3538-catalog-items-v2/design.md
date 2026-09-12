@@ -735,8 +735,12 @@ A shared, provider-curated item that pins the version, mixes locked and editable
 
 Notes on the fields above:
 
-- The `node_sets` map key is the real Template node-set name, and only its size is governable. The Template remains authoritative for `host_type`.
-- `network_attachment` governs the single tenant-facing Cluster attachment. `fabric_interface` is resolved from each node set's HostType and is not a Catalog field. A shared item leaves tenant-local subnet and SecurityGroup selection editable; an item with a Catalog default may use only references visible in the item's scope.
+- The `node_sets` map key is the real Template node-set name, and only its
+  size is governable by the Catalog Item. The effective
+  `baremetal_instance_type` comes from the resolved Cluster template and is the
+  sole hardware and interface source; Catalog Items do not introduce a second
+  hardware or interface catalog.
+- `network_attachment` governs the single tenant-facing Cluster attachment. `fabric_interface` is resolved from each node set's BareMetalInstanceType and is not a Catalog field. A shared item leaves tenant-local subnet and SecurityGroup selection editable; an item with a Catalog default may use only references visible in the item's scope.
 - Raw `pull_secret` stays ungovernable, because storing it would expose secret material through Catalog Item Get and List. The typed `pull_secret_secret` field is governable: it stores a `SecretLocalReference` that names a Secret in the tenant, so the Catalog Item holds a reference and keeps secret material out. A shared item accepts `editable {}` for it, so each tenant supplies its own Secret at provisioning.
 
 ### BareMetalInstance
@@ -1081,7 +1085,7 @@ Bare Metal Create is currently Catalog-only. It adopts the common exactly-one pr
 
 - Require exactly one of `catalog_item` or `template`, rejecting both or neither with `InvalidArgument`. The Catalog Item path materializes its Template into `spec.template`, and the direct path uses the supplied `template`.
 - Resolve Template parameters and defaults from `spec.template` for both paths.
-- Resolve the default network interface through `spec.template -> host_type`, not through the Catalog Item.
+- Resolve the default network interface through `spec.template -> baremetal_instance_type`, not through the Catalog Item.
 - The reconciler consumes only `spec.template`, so its Catalog Item client is removed.
 - Remove Bare Metal Catalog Item deletion checks against existing resources. `spec.catalog_item` is weak provenance only.
 

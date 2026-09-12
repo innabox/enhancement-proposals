@@ -95,10 +95,12 @@
 ##### Expected results
 
 - Fabric job runs before the K8s job.
-- `l2_vni`, `l3_vni`, and `fabric_reserved_range` are transferred through
-  the documented ConfigMap path.
-- CUDN uses EVPN Layer2 transport, correct VNI values, generated Phase 1
-  route targets, and reserved ranges.
+- `l2_vni`, `l3_vni`, `l2_route_target`, `l3_route_target`, and
+  `fabric_reserved_range` are transferred through the documented ConfigMap
+  path.
+- CUDN uses EVPN Layer2 transport, the Netris-provided VNI and route-target
+  values, and the required reserved ranges; the k8s manager does not calculate
+  route targets.
 - Namespace, bridge, CUDN, and IPAddressPool are Ready before Subnet Ready.
 
 #### TC-R2-02: Missing or invalid fabric output blocks CUDN
@@ -110,7 +112,8 @@
 ##### Cases
 
 - missing ConfigMap;
-- missing `l2_vni`, `l3_vni`, or `fabric_reserved_range`;
+- missing `l2_vni`, `l3_vni`, either route target, or
+  `fabric_reserved_range`;
 - malformed VNI/range;
 - fabric job Pending or Failed.
 

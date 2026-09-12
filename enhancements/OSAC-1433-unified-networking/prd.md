@@ -217,14 +217,6 @@ participants alongside BM servers. The current design does not address how
 VMs and bare-metal servers coexist in the same deployment, whether they can share
 a VirtualNetwork, or how traffic flows between them.
 
-#### Gap #8: Air-gapped environments not considered
-
-ExternalIPPool and ExternalIP must work in air-gapped deployments where there
-are no internet-routable IPs. Tenants still need the same API primitives (IP
-allocation, inbound DNAT, outbound SNAT) for data-center-internal external
-access. "External" means external to the VirtualNetwork, not
-internet-routable.
-
 #### Gap #9: CaaS has unique prerequisite ordering
 
 ~~Cluster worker nodes reach the hosted control plane API server via hairpin
@@ -245,7 +237,6 @@ the cluster's VIPs are discovered (see
 - Enable tenants to manage networking resources (VirtualNetworks, Subnets, SecurityGroups, ExternalIPs) without choosing implementation backends
 - Support pluggable networking backends that can be added without API changes
 - Enable VMs, clusters, and bare-metal servers to coexist in the same VirtualNetwork
-- Work in air-gapped environments using data-center-routable IPs
 - Support one tenant network attachment for each bare-metal server, selected from the BareMetalInstanceType's physical network ports
 - Provide IPv4-only networking; IPv6 and dual-stack networking are not supported
 
@@ -287,8 +278,6 @@ the cluster's VIPs are discovered (see
   VirtualNetwork
 - As a tenant, I want to attach ExternalIPs to my cluster's API server and
   ingress endpoints before provisioning
-- As a tenant, I want my cluster to work in air-gapped environments using
-  data-center-routable IPs
 
 ### BMaaS-Specific Stories
 
@@ -335,9 +324,9 @@ ExternalIPPool, ExternalIP, ExternalIPAttachment, NATGateway.
 
 #### FR-4: ExternalIP is external to the VirtualNetwork (R4)
 
-"External" means external to the VirtualNetwork — OSAC does not prescribe
-whether the IPs are internet-routable, intranet-only, or data-center-local.
-The provider defines the pools; the API is the same regardless.
+"External" means external to the VirtualNetwork. In the supported connected
+boundary, the provider defines pools of addresses routable from the deployment;
+air-gapped and disconnected operation is not supported.
 
 #### FR-5: Clear ingress/egress separation (R5)
 
@@ -356,8 +345,9 @@ of the current OVN limitation.
 
 #### FR-6a: Deployment baseline and tenant SecurityGroups
 
-The deployment has one provider-owned baseline permit policy that is always
-evaluated and is not represented as a tenant SecurityGroup rule. A tenant
+The deployment has one provider-owned baseline policy with a configured
+`permit` or `deny` default action. It is always evaluated and is not
+represented as a tenant SecurityGroup rule. A tenant
 default SecurityGroup is used only as the fallback attachment when a workload
 does not provide SecurityGroups. Tenant-created SecurityGroups require at
 least one explicit allow/deny rule. The most-specific matching rule wins.
@@ -385,7 +375,7 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 - [ ] Resources in the same Subnet are in the same L2 broadcast domain
 - [ ] Resources in different Subnets within the same VirtualNetwork can communicate via Layer 3 routing
 - [ ] SecurityGroups control which traffic is permitted within these boundaries — enforced uniformly for all resource types
-- [ ] The provider-owned deployment baseline permit policy remains active with both default and explicitly selected tenant SecurityGroups
+- [ ] The provider-owned deployment baseline policy, with its configured `permit` or `deny` action, remains active with both default and explicitly selected tenant SecurityGroups
 - [ ] Tenant-created SecurityGroups contain at least one explicit rule with a supported action, direction, protocol, and IPv4 CIDR
 - [ ] Bare-metal servers in the same Subnet are in the same broadcast domain regardless of their physical location (rack, switch)
 - [ ] VMs in the same Subnet are in the same broadcast domain regardless of which infrastructure they run on
@@ -418,7 +408,7 @@ supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 ### External Access
 
 - [ ] ExternalIP semantics do not depend on internet reachability
-- [ ] The API and workflow are identical for all deployment topologies (air-gapped, internet-connected, intranet-only)
+- [ ] The supported deployment boundary is connected only; air-gapped requests are rejected before provisioning
 - [ ] CaaS clusters can provision using any routable ExternalIPs for API server and ingress
 - [ ] ExternalIPAttachment handles inbound traffic only
 - [ ] NATGateway handles outbound traffic only — it is optional and provides a dedicated egress identity, not a prerequisite for basic connectivity

@@ -41,7 +41,7 @@ The following are out of scope for Phase 1:
 
 - **IPv6 and dual-stack support** — IPv4 only. IPv6 and dual-stack networking
   are not supported. [Clarify: R2.Q4]
-- **Standardized route-target format** — deferred until fabric manager implements it [Clarify: R1.Q3, D3, D7] [User]
+- **Standardized route-target format** — not part of the current contract; the k8s manager consumes fabric-manager-provided route-target values [Clarify: R1.Q3, D3, D7] [User]
 - **MetalLB IPAddressPool creation** — handled separately in OSAC-1436 (CaaS Networking) [Clarify: R3.Q3, D9]
 - **Physical infrastructure automation** — manual prerequisites remain manual for Phase 1 [Clarify: R2.Q1, R2.Q3, D5, D6]
 - **Automatic gateway MAC coordination** — Cloud Infrastructure Admin must manually coordinate gateway MAC addresses (moved to prerequisites above) [Clarify: R1.Q5]

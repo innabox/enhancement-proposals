@@ -95,7 +95,12 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Auto External IP
 
-- **FR-6:** Bare-metal servers support `--external-ip-attachment`. When enabled, the system auto-selects the external IP pool with the most available capacity, allocates an external IP, and creates an external IP attachment binding it to the server's single attachment subnet IP. The external IP and attachment are labeled as auto-provisioned. [User]
+- **FR-6:** Bare-metal servers support `--external-ip-attachment`. When
+  enabled, the system reserves capacity in the ExternalIPPool and creates a
+  Pending ExternalIP and ExternalIPAttachment binding it to the server's
+  single attachment subnet IP. Fabric allocation, server IP discovery, DNAT
+  programming, and activation occur asynchronously. The external IP and
+  attachment are labeled with `osac.openshift.io/auto-created: "true"`. [User]
 
 #### Network Connectivity Configuration
 
@@ -115,7 +120,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 #### Auto-Cleanup on Deletion
 
-- **FR-11:** When a bare-metal server is deleted, if external IP and external IP attachment were auto-provisioned (labeled as auto-provisioned), the system deletes the external IP attachment first, then the external IP. Manually created resources are NOT cleaned up. Default networking resources (virtual network, subnet, security group, NATGateway) are NOT cleaned up. [User]
+- **FR-11:** When a bare-metal server is deleted, if external IP and external IP attachment were auto-provisioned (labeled with `osac.openshift.io/auto-created: "true"`), the system deletes the external IP attachment first, then the external IP. Manually created resources are NOT cleaned up. Default networking resources (virtual network, subnet, security group, NATGateway) are NOT cleaned up. [User]
 
 #### Network Attachment Deletion
 
@@ -123,7 +128,14 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 
 ### 4.2 Non-Functional Requirements
 
-- **NFR-1:** Auto external IP allocation completes synchronously within the create API call (no async allocation delay). If no pool has available capacity, the create API call returns an error. [User]
+- **NFR-1:** Pool capacity validation and creation of Pending ExternalIP
+  and ExternalIPAttachment records complete synchronously within the create
+  API call. Fabric allocation, server IP discovery, DNAT programming, and the
+  transition to Ready are asynchronous. The ExternalIP transitions
+  `Pending -> Allocated`; the ExternalIPAttachment transitions
+  `Pending -> Ready` only after the server attachment IP is discovered and
+  DNAT succeeds. If no pool has available capacity, the create call fails
+  atomically. [User]
 
 - **NFR-2:** Network attachment provisioning (connectivity configuration) completes within 2 minutes for the server's single attachment. [User]
 
@@ -132,7 +144,7 @@ Provisioning bare-metal servers requires manual switch configuration outside the
 - [ ] A Tenant User can create a bare-metal server with one explicit network attachment specifying a physical interface from the BareMetalInstanceType
 - [ ] A Tenant User can create a bare-metal server with `--external-ip-attachment` and no explicit network attachments — the server is created on the default subnet with an auto-provisioned external IP for inbound access
 - [ ] A bare-metal server with one network attachment is provisioned on the provisioning network, then handed off to the tenant subnet through the selected interface, which provides the default gateway
-- [ ] Auto-created external IP and external IP attachment are labeled as auto-provisioned and visible in list views
+- [ ] Auto-created external IP and external IP attachment are labeled with `osac.openshift.io/auto-created: "true"` and visible in list views
 - [ ] Deleting a bare-metal server with auto-provisioned external IP causes the auto-created external IP and external IP attachment to be cleaned up automatically
 - [ ] BareMetalInstanceType API returns structured network port data (name, role, type, speed)
 - [ ] Creating a bare-metal server with an invalid interface (not in the BareMetalInstanceType's `network_ports` list) returns an error

@@ -28,10 +28,10 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 
 ### 2.2 Non-Goals
 
-- VM-based cluster node sets (deferred — bare-metal only for initial release)
+- VM-based cluster node sets are unsupported in the current release
 - DNS API for cluster endpoints (DNS record creation remains template-based until DNS API is implemented)
 - Per-node-set subnet placement (all node sets share the cluster's single network attachment)
-- Multi-NIC cluster nodes (one attachment per cluster; the system automatically determines which physical interface to use for each node set from its BareMetalInstanceType)
+- Provider-side physical interface resolution for cluster nodes (one tenant attachment per cluster; the system determines the physical interface for each node set from its BareMetalInstanceType)
 
 ## 3. User Stories
 
@@ -74,7 +74,12 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 
 #### Auto External IP
 
-- **FR-3:** Cluster creation supports `--external-ip-attachment`. When enabled, the system allocates external IPs for both the API server and ingress from available IP pools before provisioning begins. External IPs and their attachments are labeled as auto-provisioned. The attachments are activated once the cluster's API server and ingress endpoints are available. [User]
+- **FR-3:** Cluster creation supports `--external-ip-attachment`. When enabled,
+  the system reserves capacity and creates Pending ExternalIP records for both
+  the API server and ingress before provisioning begins. Fabric allocation,
+  endpoint discovery, DNAT programming, and activation occur asynchronously.
+  External IPs and their attachments are labeled with
+  `osac.openshift.io/auto-created: "true"`. [User]
 
 #### Endpoint Discovery
 
@@ -102,15 +107,22 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 
 #### Bare-Metal Only
 
-- **FR-10:** Cluster node sets are bare-metal only for the initial release. VM-based cluster node sets are architecturally supported but deferred. [User]
+- **FR-10:** Cluster node sets are bare-metal only in the current release. VM-based cluster node sets are rejected. [User]
 
 #### Auto-Provisioned Resource Cleanup
 
-- **FR-11:** Auto-provisioned networking resources (external IPs, external IP attachments) are labeled as auto-provisioned. When a cluster is deleted, the system cleans up auto-provisioned resources in reverse order: external IP attachments first, then external IPs. Manually created resources are not cleaned up. Default networking resources (virtual networks, subnets, security groups, NATGateways) are not cleaned up as they are tenant-scoped and shared across resources. [User]
+- **FR-11:** Auto-provisioned networking resources (external IPs, external IP attachments) are labeled with `osac.openshift.io/auto-created: "true"`. When a cluster is deleted, the system cleans up auto-provisioned resources in reverse order: external IP attachments first, then external IPs. Manually created resources are not cleaned up. Default networking resources (virtual networks, subnets, security groups, NATGateways) are not cleaned up as they are tenant-scoped and shared across resources. [User]
 
 ### 4.2 Non-Functional Requirements
 
-- **NFR-1:** Automatic external IP allocation and endpoint discovery complete synchronously within the cluster creation flow. Endpoint addresses are available in cluster status during provisioning, not minutes later.
+- **NFR-1:** Pool capacity validation and creation of Pending ExternalIP
+  and ExternalIPAttachment records complete synchronously within cluster
+  creation. Fabric allocation, endpoint discovery, DNAT programming, and the
+  transition to Ready are asynchronous. Each ExternalIP transitions
+  `Pending -> Allocated`; each ExternalIPAttachment transitions
+  `Pending -> Ready` only after its API or ingress endpoint is available and
+  DNAT succeeds. If no pool has available capacity, cluster creation fails
+  atomically.
 
 ## 5. Acceptance Criteria
 
@@ -120,7 +132,7 @@ Cluster provisioning has no networking configuration. Tenants cannot choose whic
 - [ ] Cluster status exposes API server and ingress endpoint addresses after provisioning completes
 - [ ] Auto-created external IP attachments activate after endpoint addresses are available and inbound routing is configured
 - [ ] The BareMetalWorkerReconciler creates workers through BMaaS, and BMaaS completes each provisioning-network handoff before the worker joins cluster installation
-- [ ] Auto-created external IPs and external IP attachments are labeled as auto-provisioned and visible in list views
+- [ ] Auto-created external IPs and external IP attachments are labeled with `osac.openshift.io/auto-created: "true"` and visible in list views
 - [ ] Deleting a cluster with auto-provisioned resources causes the auto-created external IPs and external IP attachments to be cleaned up
 - [ ] The system determines which physical network interface to use from the node set's BareMetalInstanceType network ports
 - [ ] Updating or patching the Cluster network attachment or any of its fields is rejected under the [unified networking operation contract](/enhancements/OSAC-1433-unified-networking/prd.md#network-operation-contract)

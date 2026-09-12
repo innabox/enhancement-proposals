@@ -10,8 +10,9 @@
 - **Operation contract:** create, read/list, and delete only for network-owned
   fields. Network-owned update, patch, and replace operations are unsupported.
 - **Excluded:** East-west networking is not implemented and is governed by its
-  own design. Future multi-interface, IPv6, dual-stack, multi-hub,
-  air-gapped, and VN-peering behavior is not a graduation target.
+  own design. Unsupported in the current boundary: multi-interface, IPv6,
+  dual-stack, multi-hub, air-gapped, and VN-peering behavior. These are
+  negative-test cases, not supported scenarios.
 
 ## Execution strategy
 
@@ -183,8 +184,8 @@ of an invalid parent, child, allocation, backend operation, or orphan.
 - duplicate normalized rule;
 - conflicting equal-specificity rule;
 - tenant-created empty rule list;
-- system-created fallback SecurityGroup with an empty list and provider
-  baseline permit policy.
+- system-created fallback SecurityGroup with an empty list and the provider
+  baseline policy configured with either `permit` or `deny`.
 
 ##### Expected results
 

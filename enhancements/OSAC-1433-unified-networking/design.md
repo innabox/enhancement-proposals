@@ -68,10 +68,9 @@ IPv6 and dual-stack networking are not supported.
 For user stories, goals, and non-goals, see the
 [Requirements Document (PRD)](prd.md).
 
-> **Current implementation boundary:** The current OSAC implementation supports
-> connected deployments only; air-gapped deployments are not currently
-> supported. The remainder of this document describes the desired-state
-> architecture.
+> **Current implementation boundary:** OSAC supports connected deployments only.
+> Air-gapped deployments are rejected before networking resources are provisioned.
+> The contracts below describe the current supported behavior.
 
 ## Supported Operations and Immutability
 
@@ -148,7 +147,7 @@ cardinality or placement constraints.
 | `Subnet.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a `Ready` VirtualNetwork in the same tenant/project. |
 | `Subnet.spec.ipv4_cidr` | IPv4 CIDR string, required | Must be a canonical IPv4 network CIDR contained by the parent VirtualNetwork and non-overlapping with sibling Subnets in that VN. |
 | `SecurityGroup.spec.virtual_network` | Local VirtualNetwork reference, required | Must reference a `Ready` VirtualNetwork in the same tenant/project. |
-| `SecurityGroup.spec.rules` | Repeated `SecurityGroupRule`, required for tenant-created groups | Tenant-created SecurityGroups must contain at least one rule. Rules are create-time-only, duplicates are rejected, and conflicting equal-specificity rules are rejected when the effective attachment set is resolved. The system-created tenant fallback SecurityGroup may have an empty list because the deployment baseline policy supplies the default permit behavior. |
+| `SecurityGroup.spec.rules` | Repeated `SecurityGroupRule`, required for tenant-created groups | Tenant-created SecurityGroups must contain at least one rule. Rules are create-time-only, duplicates are rejected, and conflicting equal-specificity rules are rejected when the effective attachment set is resolved. The system-created tenant fallback SecurityGroup may have an empty list because the deployment baseline policy supplies the configured default action. |
 | `ExternalIPPool.spec.ip_family` | Enum, required | `IPV4` only. IPv6 and dual-stack values are rejected. |
 | `ExternalIPPool.spec.cidrs` | Repeated IPv4 CIDR strings, required, exactly one supported | The list must contain exactly one canonical IPv4 CIDR. Multi-CIDR pools are not part of the supported contract; create separate pools instead. |
 | `ExternalIP.spec.pool` | Provider/deployment-scoped ExternalIPPool reference, required | The pool must exist, be Ready, and have capacity. The allocated address is selected by the provider/fabric manager; tenants do not supply an arbitrary address. |
@@ -178,7 +177,7 @@ arbitrary strings:
 | `protocol` | Required enum: `tcp`, `udp`, `icmp`, or `any`. Protocol matching is case-sensitive; unknown values are rejected. |
 | `port` | Optional `int32`; required for `tcp` and `udp`, omitted for `icmp` and `any`; valid range is `1..65535`. Port ranges are not supported. |
 | `source_cidr` / `destination_cidr` | Exactly one direction-specific field is required. It must be a canonical IPv4 CIDR; `source_cidr` is used for ingress and `destination_cidr` for egress. |
-| Rule evaluation | The provider-owned deployment baseline is an always-present, least-specific `allow` policy and is not part of any tenant `SecurityGroup.spec.rules`. Attached tenant rules are stateful and the most-specific matching rule wins, ordered by CIDR prefix length, exact protocol over `any`, and exact port over an omitted port. Conflicting equal-specificity effective rules are rejected. |
+| Rule evaluation | The provider-owned deployment baseline is an always-present, least-specific policy with a configured `permit` or `deny` default action; it is not part of any tenant `SecurityGroup.spec.rules`. Attached tenant rules are stateful and the most-specific matching rule wins, ordered by CIDR prefix length, exact protocol over `any`, and exact port over an omitted port. Conflicting equal-specificity effective rules are rejected. |
 
 ### Workload network fields
 
@@ -187,7 +186,7 @@ arbitrary strings:
 | `ComputeInstance.compute_network_attachments` | Repeated `ComputeNetworkAttachment`, optional | Missing or empty uses both tenant defaults. A supplied list contains zero or one entry only; more than one entry is rejected. The entry may omit individual fields for field-level defaulting. |
 | `ComputeNetworkAttachment.subnet` | Local Subnet reference, optional at request and required after resolution | If omitted, resolve only the tenant default Subnet. If supplied, it must exist and be `Ready`. |
 | `ComputeNetworkAttachment.security_groups` | Repeated local SecurityGroup references, optional | Missing or empty resolves only the tenant default SecurityGroup. A non-empty list uses exactly the supplied groups; every group must be same-VN and `Ready`, with no duplicates. |
-| `ComputeNetworkAttachment.primary` | Optional boolean | With the supported single attachment, omission or `true` makes it primary; explicit `false` is rejected. Multi-interface primary selection is deferred. |
+| `ComputeNetworkAttachment.primary` | Optional boolean | With the supported single attachment, omission or `true` makes it primary; explicit `false` is rejected. Multi-interface primary selection is unsupported. |
 | `Cluster.network_attachment` | `ClusterNetworkAttachment`, optional | Missing or an empty message uses both tenant defaults. When present, exactly one resolved attachment applies to every node set; missing subnet and SecurityGroups are defaulted independently. |
 | `BaremetalInstance.network_attachments` | Repeated `BareMetalNetworkAttachment`, optional | Missing or empty uses both tenant defaults. A non-empty list must contain exactly one entry; its subnet and SecurityGroups are defaulted independently when omitted. |
 | `BareMetalNetworkAttachment.interface` | String reference/name, optional | If set, it must identify a valid non-lifecycle port. If omitted, BMaaS selects the first valid `fabric` port from the effective BareMetalInstanceType. |
@@ -344,14 +343,15 @@ provision an ambiguous address space.
   detection. Two normalized identical rules are duplicates even if their input
   text used different equivalent formatting;
 - reject conflicting equal-specificity rules after normalization. A
-  least-specific deployment baseline permit is not a tenant rule and is not
+  least-specific deployment baseline policy is not a tenant rule and is not
   considered a conflicting tenant rule;
 - reject a rule whose source/destination field does not match its direction,
   including ingress with only `destination_cidr` or egress with only
   `source_cidr`; and
 - keep the complete rule list immutable after create. The runtime evaluator
   must apply the provider baseline plus attached tenant groups without
-  allowing an attached tenant group to remove the baseline permit.
+  allowing an attached tenant group to change the provider-owned baseline
+  policy.
 
 **ExternalIPPool.** The provider-scoped pool validation must:
 
@@ -811,10 +811,9 @@ ExternalIPAttachment (tenant-managed)
 ### ExternalIPPool
 
 "External" in ExternalIPPool/ExternalIP means **external to the
-VirtualNetwork** — not necessarily internet-routable. In air-gapped
-environments, the provider creates pools with data-center-routable IPs. In
-internet-connected environments, the pools contain internet-routable IPs.
-The API and flow are identical regardless of the deployment topology.
+VirtualNetwork**. In the supported connected deployment boundary, the
+provider supplies the routable addresses and the configured manager allocates
+them. Air-gapped deployment behavior is outside the supported contract.
 
 ExternalIPPools are provider-managed and deployment-scoped. The configured
 manager handles ExternalIP allocation — one pool serves all resource types.
@@ -882,15 +881,16 @@ SecurityGroup behavior is uniform across VMaaS, CaaS, and BMaaS and is
 enforced by the selected network backend.
 
 The deployment has one provider-owned baseline ACL policy that is always
-present and permits traffic when no more-specific tenant rule matches. This
-baseline is not a tenant `SecurityGroup`, is not stored in
-`SecurityGroup.spec.rules`, and remains active even when a tenant explicitly
-attaches one or more SecurityGroups.
+present and applies its configured `permit` or `deny` action when no
+more-specific tenant rule matches. This baseline is not a tenant
+`SecurityGroup`, is not stored in `SecurityGroup.spec.rules`, and remains
+active even when a tenant explicitly attaches one or more SecurityGroups.
 
 The tenant default SecurityGroup is a tenant-scoped fallback resource. It is
 attached only when an attachment omits its SecurityGroups; it is not the
 deployment baseline. The system-created fallback group may have an empty
-rule list because the deployment baseline supplies the default permit. A
+rule list because the deployment baseline supplies the configured default
+action. A
 tenant-created SecurityGroup must contain at least one explicit rule.
 
 Tenant rules have an explicit `allow` or `deny` action. When the baseline and
@@ -951,8 +951,8 @@ osac create cluster --template ocp_4_17_small \
   --node-set workers=large,size=3 --name my-cluster
 ```
 
-For v0.2, **CaaS supports BM node sets only**. VM-based cluster node sets
-are architecturally possible but deferred. The fulfillment-service resolves
+For the current supported release, **CaaS supports BM node sets only**.
+VM-based cluster node sets are not supported. The fulfillment-service resolves
 the interface from the BareMetalInstanceType (`fabric_interface` — first port
 with role `fabric`). The BareMetalWorkerReconciler passes that resolved
 interface to BMaaS, which owns the network attachment and switch-port
@@ -1080,10 +1080,13 @@ osac get cluster my-cluster -o yaml
 # ingress_endpoint: 10.0.1.50
 ```
 
-ExternalIPAttachments can be created before or after the cluster. If
-created before (Pending state), the controller activates them once the
-cluster's endpoint VIPs are available. If created after, the DNAT rule
-is configured immediately.
+A caller-created ExternalIPAttachment may be created only after its
+ExternalIP is Allocated and its target is Ready with the required endpoint.
+The sole forward-reference exception is the internal auto-provisioning
+transaction described below: it creates the Pending ExternalIP and Pending
+attachment atomically with the parent workload. The asynchronous controller
+then waits for both dependencies before programming DNAT and marking the
+attachment Ready.
 
 **Auto-provisioning lifecycle (auto_external_ip_attachment):**
 
@@ -1302,8 +1305,9 @@ message SecurityGroupRule {
 
 The default tenant fallback SecurityGroup is system-created and may have an
 empty `rules` list. Tenant-created SecurityGroups require at least one rule.
-The deployment-wide baseline permit policy is provider-owned and is not
-serialized as a `SecurityGroupRule`.
+The deployment-wide baseline policy is provider-owned and is not
+serialized as a `SecurityGroupRule`; its configured default action is not
+serialized in the tenant SecurityGroup either.
 
 #### BareMetalInstanceType and Interface Resolution
 
@@ -1325,8 +1329,8 @@ message BareMetalNetworkPortSpec {
 Every BareMetalInstanceType used for networking must expose at least one
 `fabric` port. Ports are ordered; when multiple ports share a role, the first
 one is the default for that role. `host_label_selector` is used for inventory
-matching; no separate HostType interface catalog is used for CaaS or BMaaS
-network attachment resolution.
+matching; CaaS and BMaaS resolve network attachments directly from
+BareMetalInstanceType, with no separate interface catalog.
 
 | Role | Meaning |
 |------|---------|
@@ -1650,7 +1654,7 @@ network reference continues to protect the network object, while
 #### NATGateway Scope
 
 One NATGateway per VirtualNetwork. All subnets in the VN use the gateway.
-Per-subnet NAT association is a future enhancement.
+Per-subnet NAT association is unsupported.
 
 #### Attachment cardinality and primary behavior
 
@@ -1745,8 +1749,8 @@ VirtualNetwork at creation time.
 |------|--------|------------|
 | Fabric manager complexity | One Ansible role handles all networking concerns | Clear interface contract per operation; tested independently per manager |
 | K8s-to-fabric bridge failure | VMs unreachable from fabric | k8sManager validates bridge connectivity at subnet creation; subnet stays Pending until bridge is confirmed |
-| CaaS prerequisite ordering | ExternalIPs may be needed before cluster | Pending state for attachments; template validates its own prerequisites |
-| ExternalIPAttachment target validation | Target may not exist yet (CaaS) or may be deleted | Pending state for forward references; attachment tracks target lifecycle |
+| CaaS prerequisite ordering | Internal auto-provisioning reserves ExternalIP capacity before the cluster endpoint exists | The internal path creates Pending records atomically; the controller waits for allocation and endpoint readiness before DNAT |
+| ExternalIPAttachment target validation | A caller-created attachment may reference a target that is not Ready or may be deleted | Direct create rejects non-Ready references; only the internal auto-provisioning path may create a Pending forward reference, and deletion is handled by the parent cleanup flow |
 | CIDR overlap | Overlapping subnets cause routing ambiguity | Operator validates at creation time; rejected with clear error |
 
 ### Drawbacks
@@ -1797,7 +1801,7 @@ time. Creates ambiguous subnet state and complicates the tenant experience.
    resource (either ExternalIPAttachment or NATGateway, not both).
 
 4. **One NATGateway per VN.** Multiple gateways are ambiguous. Per-subnet
-   NAT is a future enhancement.
+   NAT association is unsupported.
 
 5. **ExternalIPPool shared.** The configured network manager handles ExternalIP
    allocation for all resource types. One pool per deployment.
@@ -1809,9 +1813,9 @@ time. Creates ambiguous subnet state and complicates the tenant experience.
 7. **Internal IP pools.** Managed by managers with sensible defaults. Not
    part of the tenant API or NetworkClass spec.
 
-8. **ExternalIP naming.** "External" means external to the VirtualNetwork —
-   not necessarily internet-routable. Applies equally to air-gapped and
-   internet-connected deployments.
+8. **ExternalIP naming.** "External" means external to the VirtualNetwork.
+   The supported deployment boundary is connected only; air-gapped behavior is
+   rejected and is not part of this design.
 
 9. **Attachment immutability.** Attachment cardinality, Subnet, interface,
    primary designation, SecurityGroup membership, and every other

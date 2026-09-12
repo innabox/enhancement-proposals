@@ -61,7 +61,10 @@ For Phase 1:
 
 #### Answer
 
-Phase 1 will not include `0:VNI_ID` route-target standardization. VNI propagation from fabric manager to k8s manager is automatic - no manual extraction or coordination steps required (unlike the demo's Phase 4/5 manual workflow).
+The current contract does not define a `0:VNI_ID` route-target format. Netris
+returns the route-target values during VPC/VNet provisioning, and the k8s
+manager consumes them automatically; no manual extraction or coordination is
+required.
 
 #### Impact
 
@@ -235,7 +238,9 @@ For Phase 1:
 
 #### Answer
 
-Route target is automatically set during CUDN creation. The route target is not known until Netris creates the VPC and subnet. The k8s manager then uses that route target when creating the CUDN. No manual configuration by users.
+Netris returns the route-target values when it creates the VPC and subnet.
+The k8s manager passes those values into CUDN/FRR configuration during CUDN
+creation. No manual configuration is exposed to users.
 
 #### Impact
 

@@ -48,8 +48,10 @@ Pure consumer of the existing private `ExternalIPPools` service
 - **Create/update form** (`ExternalIpPoolFormPage`, one shared component for both
   `/admin/infrastructure/external-ip-pools/create` and
   `/admin/infrastructure/external-ip-pools/:id/edit`, Formik+Yup): **Name** (DNS label),
-  **IPv4 CIDRs** (repeatable, ≥1, `FieldArray`). In edit mode, all pool network
-  fields are immutable server-side and render disabled for reference — only
+  **IPv4 CIDR** (exactly one value, submitted as a one-element `cidrs` list).
+  Do not offer an **Add CIDR** control; client validation rejects empty or
+  multiple values. In edit mode, all pool network fields are immutable
+  server-side and render disabled for reference — only
   the resource metadata **Name** remains editable. Create submits
   `{ metadata: { name }, spec: { ipFamily: "IPv4", cidrs } }` via `useCreateExternalIPPool()`;
   metadata-only update submits via `useUpdateExternalIPPool()` with `lock=true`.
