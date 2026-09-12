@@ -36,9 +36,9 @@ Rewrite the osac-ui catalog provision wizard with static fields per resource typ
 
 Rewrite under `osac-ui/apps/app-frontend/src/components/catalogProvision/`. `CatalogProvisionWizard` embeds in create pages and owns shared steps (Catalog Item, General, Review). **Configuration** and **Networking** are adapter components — VM pickers and cluster `node_sets`/CIDR fields are not shareable.
 
-Static field paths are hardcoded per resource type (PRD §2.1.1). Catalog `field_definitions` overlay matching static paths on **Configuration**, **Networking** non-picker fields, and **General basics** fields (`ssh_key`, `ssh_public_key`, `pull_secret`) for `display_name`, `editable`, and `validation_schema`. Picker-backed paths (`spec.instance_type`, `spec.network_attachments` and nested paths, cluster `spec.node_sets` host type per row) ignore catalog `field_definitions` in v1. Create payloads include only PRD §2.1.1 paths plus catalog item reference; VM hardcodes `spec.image.source_type` = `registry`.
+Static field paths are hardcoded per resource type (PRD §2.1.1). Catalog `field_definitions` overlay matching static paths on **Configuration**, **Networking** non-picker fields, and **General basics** fields (`ssh_key`, `ssh_public_key`, `pull_secret`) for `display_name`, `editable`, and `validation_schema`. Picker-backed paths (`spec.instance_type`, `spec.compute_network_attachments` and nested paths, cluster `spec.node_sets` BareMetalInstanceType per row) ignore catalog `field_definitions` in v1. Create payloads include only PRD §2.1.1 paths plus catalog item reference; VM hardcodes `spec.image.source_type` = `registry`.
 
-New hooks in `libs/ui-components/src/api/v1/`: instance types, virtual networks, subnets, security groups, cluster catalog items, host types (list), cluster create. VM picker fields depend on fulfillment-service `spec.instance_type` and `spec.is_windows` (PRs #735, #734). Cluster Configuration uses `HostTypes.List` for per-row host type pickers; it does **not** call `ClusterTemplates.Get` for `node_sets`.
+New hooks in `libs/ui-components/src/api/v1/`: instance types, virtual networks, subnets, security groups, cluster catalog items, BareMetalInstanceTypes (list), cluster create. VM picker fields depend on fulfillment-service `spec.instance_type` and `spec.is_windows` (PRs #735, #734). Cluster Configuration uses `BareMetalInstanceTypes.List` for per-row BareMetalInstanceType pickers; it does **not** call `ClusterTemplates.Get` for `node_sets`.
 
 ### Workflow Description
 
@@ -69,7 +69,7 @@ sequenceDiagram
 | Catalog Item | Shared | `adapter.useCatalogItems()` |
 | General | Shared | Name (required), optional SSH key (catalog `ssh_key` overlay); cluster adds required pull secret and optional `ssh_public_key` overlay |
 | Configuration | Adapter | VM: image, OS family, instance type, user data, boot disk, run strategy. Cluster: release image, tenant-managed `node_sets` table (add/remove rows) |
-| Networking | Adapter | VM: VN → subnet → SG pickers (single `network_attachments` entry). Cluster: pod/service CIDR |
+| Networking | Adapter | VM: VN → subnet → SG pickers (single `compute_network_attachments` entry). Cluster: pod/service CIDR |
 | Review | Shared | `adapter.getReviewSections()` — same labels and values as wizard steps; submit via `buildCreatePayload` |
 
 Register `/vms/create` and `/clusters/create` before `:id` routes. On failure: inline errors on the step; any non-2xx create response stays on Review; deprecated instance type warnings from create response are non-blocking and surfaced after submit.
@@ -100,9 +100,9 @@ Non-editable fields without a catalog `default` render blank and read-only (disa
 
 **VM General specifics:** `spec.ssh_key` is optional — prefill catalog `default` on catalog selection when defined; merge catalog `ssh_key` `field_definition` for label, `editable`, and `validation_schema`. Omit from client payload only when blank (tenant cleared or no catalog default). When non-blank, send the parsed plain string (prefilled default or user edit).
 
-**VM Networking specifics:** Load VN list first; on selection, filter subnets and security groups with `this.spec.virtual_network == "<vn-id>"`. Assemble one `network_attachments` element: `{ "subnet": "<id>", "security_groups": ["<id>"] }`. Virtual network ID is not sent in the attachment payload.
+**VM Networking specifics:** Load VN list first; on selection, filter subnets and security groups with `this.spec.virtual_network == "<vn-id>"`. Assemble one `compute_network_attachments` element: `{ "subnet": "<id>", "security_groups": ["<id>"] }`. Virtual network ID is not sent in the attachment payload.
 
-**Cluster Configuration specifics:** `spec.node_sets` is **tenant-composed** — the wizard does **not** load, display, or apply `ClusterTemplate.spec.node_sets`. On Configuration, render an editable table with **Add node set** / **Remove** actions. Each row: **Host type** (`SelectField` from `HostTypes.List` — [PRD §2.1.6](prd.md#216-cluster-host-type-picker-api)) and **Nodes** (`size` number input, > 0). `ClusterNodeSet` requires only `host_type` and `size` — no separate name column. Validation: at least one row required; host type and positive `size` required per row; **duplicate host types blocked** (each host type id at most once). `buildClusterCreatePayload` uses **host type id as the map key** and sets `host_type` on the value to the same id. Review shows host type label and node count per row. Filter or disable host types already selected on other rows in remaining dropdowns. `ClusterConfigurationStep` loads the host type list on mount; no `useClusterTemplate` call.
+**Cluster Configuration specifics:** `spec.node_sets` is **tenant-composed** — the wizard does **not** load, display, or apply `ClusterTemplate.spec.node_sets`. On Configuration, render an editable table with **Add node set** / **Remove** actions. Each row: **BareMetalInstanceType** (`SelectField` from `BareMetalInstanceTypes.List` — [PRD §2.1.6](prd.md#216-baremetal-instance-type-picker-api)) and **Nodes** (`size` number input, > 0). `ClusterNodeSet` requires only `baremetal_instance_type` and `size` — no separate name column. Validation: at least one row required; BareMetalInstanceType and positive `size` required per row; **duplicate BareMetalInstanceTypes blocked** (each BareMetalInstanceType id at most once). `buildClusterCreatePayload` uses **BareMetalInstanceType id as the map key** and sets `baremetal_instance_type` on the value to the same id. Review shows BareMetalInstanceType label and node count per row. Filter or disable BareMetalInstanceTypes already selected on other rows in remaining dropdowns. `ClusterConfigurationStep` loads the BareMetalInstanceType list on mount; no `useClusterTemplate` call.
 
 **Cluster General specifics:** `spec.ssh_public_key` and `spec.pull_secret` follow the same General basics overlay rules as VM `spec.ssh_key` (prefill catalog `default`, label, editable, validation). `spec.pull_secret` remains required on the wizard when no catalog rule makes it optional.
 
@@ -112,7 +112,7 @@ Non-editable fields without a catalog `default` render blank and read-only (disa
 
 ### API Extensions
 
-No API extensions to create payloads. The wizard consumes existing `ComputeInstanceCatalogItems`, `ClusterCatalogItems`, `InstanceTypes`, networking list APIs (`GET /api/fulfillment/v1/virtual_networks`, `.../subnets`, `.../security_groups`), `HostTypes.List` (`GET /api/fulfillment/v1/host_types`), and create APIs. Server-side catalog validation (`catalog_item_validation.go` / `applyFieldDefinitions`) still applies catalog `field_definitions` on create when the client omits a field the wizard left blank. The wizard does **not** use `ClusterTemplates.Get` for Configuration `node_sets`.
+No API extensions to create payloads. The wizard consumes existing `ComputeInstanceCatalogItems`, `ClusterCatalogItems`, `InstanceTypes`, networking list APIs (`GET /api/fulfillment/v1/virtual_networks`, `.../subnets`, `.../security_groups`), `BareMetalInstanceTypes.List` (`GET /api/fulfillment/v1/baremetal_instance_types`), and create APIs. Server-side catalog validation (`catalog_item_validation.go` / `applyFieldDefinitions`) still applies catalog `field_definitions` on create when the client omits a field the wizard left blank. The wizard does **not** use `ClusterTemplates.Get` for Configuration `node_sets`.
 
 ### Implementation Details/Notes/Constraints
 
@@ -171,7 +171,7 @@ Adapter steps use Formik context, own API hooks and loading UI, and export Yup f
 
 **Catalog item change:** Do not use `enableReinitialize` — it would reset user edits whenever `initialValues` changes. Instead, `onCatalogItemSelected` explicitly calls `resetForm({ values: getInitialValues(item) })` and applies catalog overlay defaults so reinitialization happens only on intentional catalog selection, not on unrelated parent re-renders. Cluster catalog selection does **not** fetch `ClusterTemplates.Get` or seed `spec.node_sets` from the template.
 
-**PRD §5 decisions (v1):** Ignore catalog `field_definitions` on picker-backed paths (`spec.instance_type`, `spec.network_attachments`, `spec.node_sets` host type picker). No wizard UI for `spec.additional_disks` — boot disk only. Cluster `node_sets` are tenant-composed (add/remove rows); template `node_sets` are ignored. PRD `?` fields are **optional**: `spec.boot_disk.size_gib`, `spec.network.pod_cidr`, and `spec.network.service_cidr` — omit from payload when blank. `spec.ssh_key` / `spec.ssh_public_key` are optional basics fields — prefill catalog `default` when defined; omit from client payload only when blank.
+**PRD §5 decisions (v1):** Ignore catalog `field_definitions` on picker-backed paths (`spec.instance_type`, `spec.compute_network_attachments`, `spec.node_sets` BareMetalInstanceType picker). No wizard UI for `spec.additional_disks` — boot disk only. Cluster `node_sets` are tenant-composed (add/remove rows); template `node_sets` are ignored. PRD `?` fields are **optional**: `spec.boot_disk.size_gib`, `spec.network.pod_cidr`, and `spec.network.service_cidr` — omit from payload when blank. `spec.ssh_key` / `spec.ssh_public_key` are optional basics fields — prefill catalog `default` when defined; omit from client payload only when blank.
 
 **Removed:** `partitionFieldDefinitions`, generic `ConfigurationStep`/`CatalogFieldInput`, `canProceedWizardStep`, text-based networking rows, catalog-driven field discovery. Replaced by static field tables, `OsacForm`, and Formik-connected `InputField` / `SelectField` / `RadioButtonField` components.
 
@@ -260,14 +260,14 @@ apps/app-frontend/src/pages/
 | Invalid catalog `validation_schema` on overlay field | Merged Yup rule fires on Next |
 | Valid step after errors | Fix values → Next advances; errors clear on corrected fields |
 | Empty cluster `node_sets` (no rows) | Configuration blocks Next; inline error on table (at least one node set required) |
-| Duplicate host type on cluster Configuration | Inline error; host type excluded from other row pickers; no advance until resolved |
+| Duplicate BareMetalInstanceType on cluster Configuration | Inline error; BareMetalInstanceType excluded from other row pickers; no advance until resolved |
 
 #### Back navigation and form state
 
 | Scenario | Assert |
 |----------|--------|
 | General → Configuration → Back | Name, SSH key, pull secret (cluster) unchanged in inputs |
-| Configuration → Networking → Back | Release image, node set host types and sizes preserved |
+| Configuration → Networking → Back | Release image, node set BareMetalInstanceTypes and sizes preserved |
 | Networking → Review → Back | Picker selections and CIDR values preserved |
 | Review → Back through all steps | Every field still matches values entered earlier |
 | Change catalog item after editing | `onCatalogItemSelected` resets to `getInitialValues`; prior edits discarded |
@@ -288,7 +288,7 @@ apps/app-frontend/src/pages/
 | Scenario | Assert |
 |----------|--------|
 | Happy path VM | Select catalog item → fill required fields on each step → Review shows same labels/values as steps |
-| Happy path cluster | Tenant adds one or more node set rows; selects host type from dropdown and node count; Review lists host type and size per row |
+| Happy path cluster | Tenant adds one or more node set rows; selects BareMetalInstanceType from dropdown and node count; Review lists BareMetalInstanceType and size per row |
 | Optional basics / config fields left blank | Review shows empty/omitted state; client payload omits those keys (assert via mocked create handler) |
 | Catalog ssh_key default on select | General SSH field prefilled with parsed catalog default; create payload includes plain-string `ssh_key` unless tenant clears the field |
 | Single-option picker lists | Instance type / VN / subnet / SG auto-selected; value visible on Review after Back |
@@ -307,7 +307,7 @@ apps/app-frontend/src/pages/
 
 - **VM Configuration:** OS family radio toggles `spec.is_windows`; obsolete instance types excluded from picker options.
 - **VM Networking:** Subnet/SG lists filter after VN selection; changing VN clears dependent picks unless auto-select applies.
-- **Cluster Configuration:** Tenant can add/remove node set rows; host type dropdown from `HostTypes.List`; `host_type` and `size` > 0 validated per row; at least one row required; duplicate host types blocked; payload map key = host type id.
+- **Cluster Configuration:** Tenant can add/remove node set rows; BareMetalInstanceType dropdown from `BareMetalInstanceTypes.List`; `baremetal_instance_type` and `size` > 0 validated per row; at least one row required; duplicate BareMetalInstanceTypes blocked; payload map key = BareMetalInstanceType id.
 - **Cluster Networking:** Optional CIDR fields — empty allowed; invalid format blocked on Next only when non-empty.
 
 Component tests are required for merge; add cases when fixing wizard regressions.
@@ -319,4 +319,4 @@ Component tests are required for merge; add cases when fixing wizard regressions
 
 ### Manual smoke
 
-End-to-end VM and cluster provision via `/vms/create` and `/clusters/create`; cluster wizard with manually added node sets and host type dropdown; submit with optional fields left blank; verify Details page after successful create.
+End-to-end VM and cluster provision via `/vms/create` and `/clusters/create`; cluster wizard with manually added node sets and BareMetalInstanceType dropdown; submit with optional fields left blank; verify Details page after successful create.

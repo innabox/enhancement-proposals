@@ -3,7 +3,7 @@ title: multi-fabric-east-west-networking
 authors:
   - vromanso@redhat.com
 creation-date: 2026-07-14
-last-updated: 2026-08-11
+last-updated: 2026-09-10
 tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-1382
 prd:
@@ -39,6 +39,18 @@ introduced.
 The AAP path for Server Cluster create/delete is already implemented
 (osac-aap PR #447). VPC → Server Cluster in existing VPC → OSAC Subnet
 coexistence and tenant isolation were validated on zeus12.
+
+## Deployment Topology
+
+This design supports exactly one hub cluster per OSAC deployment. Multi-hub
+deployments are not supported. FabricDomain, VirtualNetwork, and Subnet
+resources are reconciled through that hub; the fabric and workload servers
+remain data-plane infrastructure rather than additional hubs.
+
+> **Current implementation boundary:** OSAC supports connected deployments only.
+> Air-gapped deployments are rejected before networking resources are provisioned.
+> This document owns the east-west workload participation contract; the shared
+> and per-service north-south designs do not expose it.
 
 ## Motivation
 
@@ -80,6 +92,23 @@ without redesign.
 - Phase 1: Ethernet east-west via Netris Server Clusters; reuse existing AAP roles.
 - Clear extension path to InfiniBand (UFM) and NVLink (NMX-C / NICo).
 - Phase 1: required 1:1 association with VirtualNetwork (Netris VPC binding + N-S).
+- Bare-metal and VM workloads in the same FabricDomain can use the isolated
+  east-west fabric; provider-side device attachment is owned by this design.
+
+## Workload participation
+
+FabricDomain `servers` identifies the physical hosts that form the east-west
+membership boundary. Bare-metal workloads use the configured east-west fabric
+NIC on a member host. VM workloads are scheduled onto member hosts and use a
+provider-managed SR-IOV VF or GPU device on that host for east-west traffic.
+The east-west device is not represented as an additional tenant
+`network_attachments` entry in the north-south workload APIs.
+
+A workload cannot claim east-west readiness until it is placed on an eligible
+member host, its provider-side device is attached, and the effective
+SecurityGroup ACLs have been programmed. Placement or device failures leave
+the workload/FabricDomain status non-Ready and are retried; they do not
+silently fall back to a different tenant isolation domain.
 
 ## Non-Goals
 
@@ -88,7 +117,7 @@ without redesign.
   segment under VPC (separate hierarchy discussion if desired).
 - Pool-based automatic server assignment (explicit server lists in Phase 1).
 - Tenant-facing PKey or NVLink partition resources (backend/template concerns).
-- Virtual-cluster / SR-IOV east-west (bare-metal Phase 1).
+- Changing the north-south attachment contracts; east-west device attachment is provider-side and defined above.
 - Changing whether networking CRs are cluster-scoped vs namespaced (follow
   existing OSAC networking conventions; examples below are illustrative).
 
@@ -186,7 +215,7 @@ service FabricDomains {
 
 // NetworkClass extensions (existing resource, new fields)
 message NetworkClassCapabilities {
-  // existing: supports_ipv4, supports_ipv6, …
+  // Existing networking capability: IPv4 only.
   bool supports_east_west_ethernet = 5;
   bool supports_east_west_infiniband = 6;
   bool supports_nvlink = 7;
@@ -225,7 +254,8 @@ Changing them requires delete + re-create. `servers` is mutable (resize).
 | FD-VAL-03 | `virtual_networks` length == 1 | `INVALID_ARGUMENT`: "exactly one VirtualNetwork required in Phase 1" |
 | FD-VAL-04 | Referenced VN must exist and be same-tenant | `NOT_FOUND` / `PERMISSION_DENIED` |
 | FD-VAL-05 | VN's NetworkClass must have `east_west_config.ethernet_ew.template_id` for `ETHERNET_EW` | `FAILED_PRECONDITION`: "NetworkClass missing template_id for ethernet_ew" |
-| FD-VAL-06 | Type `INFINIBAND_EW` / `NVLINK` rejected until Phase 2/3 | `UNIMPLEMENTED`: "type not yet supported" |
+| FD-VAL-06 | Type `INFINIBAND_EW` / `NVLINK` is not supported in the current design | `UNIMPLEMENTED`: "type not supported" |
+| FD-VAL-07 | On create or a supported `servers` change, every server hostname must not already belong to another FabricDomain; the check and membership reservation are atomic | `ALREADY_EXISTS`: "server already belongs to another FabricDomain" |
 
 ### Why Phase 1 requires VirtualNetwork (1:1)
 
@@ -379,10 +409,23 @@ via the same Server Cluster's EW V-Net. FabricDomain does not remove N-S.
 
 ### Multiple FabricDomains, few NetworkClasses
 
-NetworkClass is a catalog entry ("how we implement EW on this backend").
-FabricDomain is an instance ("these servers, this fabric type"). Many domains
-may reference one NetworkClass. Multiple NetworkClasses only when backends or
-templates differ (e.g. GPU vs storage template, Netris vs NICo).
+NetworkClass is a provider configuration profile ("how we implement EW on
+this backend"). FabricDomain is an instance ("these servers, this fabric
+type"). Many domains may reference one NetworkClass. Multiple NetworkClasses
+only when backends or templates differ (e.g. GPU vs storage template, Netris
+vs NICo). NetworkClass is not an OSAC Catalog Item and is not a customer
+offering.
+
+### Catalog Item boundary
+
+Catalog Item v2 governs create-time choices on a ComputeInstance, Cluster, or
+BaremetalInstance, including the resource's north-south network attachment.
+It does not create, select, or compose a `FabricDomain`, and it does not
+govern the NetworkClass, east-west template, server membership, NIC mapping,
+or provisioning networks. A resource offering that needs both a tenant
+Subnet and an east-west FabricDomain therefore requires the FabricDomain to be
+managed as a separate resource; multi-resource Catalog offerings are outside
+the current Catalog Item scope.
 
 ### Who manages InfiniBand / NVLink?
 
@@ -442,6 +485,11 @@ Server Cluster Template example (Netris, infra-owned):
 
 FabricDomain does not repeat this. Changing NIC layout = change template on
 NetworkClass, not the domain object.
+
+These template-level NIC mappings are infrastructure-side fabric plumbing and
+do not change the BMaaS resource contract. A `BaremetalInstance` uses one
+tenant network attachment on one physical NIC; this design does not support
+multi-NIC or multi-homed BMaaS attachments.
 
 ---
 
@@ -554,6 +602,23 @@ FabricDomain inherits the existing OSAC multi-tenant security model:
 - **No new authentication/authorization surface:** FabricDomain uses the same
   gRPC interceptor chain and OPA policy engine as existing networking resources.
 
+SecurityGroup behavior on the associated VirtualNetwork follows the unified
+networking contract. The provider-owned deployment baseline policy is separate
+from the tenant default SecurityGroup and is always evaluated; its configured
+default action is `permit` or `deny` when no more-specific rule matches. The
+tenant default SecurityGroup is a tenant-scoped fallback used only when an
+east-west attachment omits an explicit SecurityGroup, and its rules are
+immutable after creation.
+
+For traffic in a FabricDomain-associated VirtualNetwork, the effective
+SecurityGroup rules are translated into fabric ACL entries. Translation
+preserves direction, action, protocol, CIDR, and port semantics, and applies
+the same most-specific-match rule. The east-west controller reconciles ACLs
+when an effective SecurityGroup or FabricDomain membership changes. A
+FabricDomain is not reported Ready until the required membership and ACL
+programming succeeds. A backend ACL failure leaves `Ready=False`, records the
+backend error, and is retried without claiming that traffic is protected.
+
 ### Failure Handling and Recovery
 
 | Failure mode | What happens | Recovery | User observes |
@@ -563,7 +628,8 @@ FabricDomain inherits the existing OSAC multi-tenant security model:
 | **Invalid template_id on NetworkClass** | Netris rejects the create request (400) | AAP job fails fast; operator surfaces the error | Condition `Ready=False`, Reason=`InvalidTemplate` |
 | **VN deleted while FabricDomain references it** | Validation prevents VN deletion if FabricDomains reference it (finalizer on VN) | Admin must delete FabricDomain first, then VN | VN deletion blocked with error message |
 | **Operator restart mid-reconciliation** | Controller re-reads FabricDomain CR on startup | Idempotent: if Server Cluster already exists in Netris (matched by `backend_id`), operator syncs status; if not, re-creates | Temporary condition staleness until re-reconciliation completes |
-| **Duplicate server across FabricDomains** | Phase 1 does not validate server overlap | Netris may reject or accept depending on template; admin is trusted | If Netris rejects: Condition `Ready=False`; if accepted: both domains provision |
+| **Duplicate server across FabricDomains** | Atomic fulfillment-service validation rejects a server already assigned to another FabricDomain before backend provisioning | No backend operation is started; the request returns `ALREADY_EXISTS` and the FabricDomain remains absent or non-Ready |
+| **SecurityGroup ACL programming failure** | Fabric manager rejects or cannot apply the translated east-west ACL set | Controller records `Ready=False`, retains the error, and retries the ACL reconciliation; it does not report the domain Ready |
 
 **Idempotency:** Create and delete operations use `backend_id` (Netris Server
 Cluster ID) persisted in status. Retries target the same backend resource.
@@ -609,7 +675,7 @@ minutes indicates Netris API or data-plane convergence issues.
 |------|--------|------------|
 | **Fabric manager API changes** | Netris API breaking changes could block provisioning | Pin `netris.controller` collection version in AAP; abstract via NetworkClass so backend swap does not change the OSAC API |
 | **Server Cluster activation latency** | Data plane convergence takes ~3 min after API reports "Active" | Document expected latency; operator treats `Ready=True` as control-plane ready; data-plane readiness is a future health-check enhancement |
-| **Server overlap across domains** | Two FabricDomains with overlapping servers could cause switch port conflicts | Phase 1: admin-trusted (documented limitation). Phase 2: add server overlap validation at the fulfillment-service layer |
+| **Server overlap across domains** | Two FabricDomains with overlapping servers could cause switch port conflicts | Atomic membership uniqueness validation rejects the second assignment before any backend provisioning or update is started |
 | **Template misconfiguration** | Wrong `template_id` on NetworkClass applies incorrect NIC mapping | Validation ensures template_id is non-empty; Netris rejects invalid IDs. Template correctness is infra admin responsibility |
 | **`supports_east_west_ethernet` capability rename** | AAP metadata and operator may disagree during rolling upgrade | Additive change: new capability field; old `supports_east_west` retained as deprecated alias during transition. See Version Skew Strategy |
 
@@ -633,20 +699,25 @@ equivalent to "create a Server Cluster in a VPC" with an additional resource.
 
 ## Phase 1 limitations
 
+All IP addressing in this design is IPv4-only. IPv6 and dual-stack networking
+are not supported.
+
 - VirtualNetwork association required (exactly one); zero or many deferred.
 - **Membership is static.** Admin provides explicit hostnames at create time.
-  Phase 2 should support inventory-driven membership (label selectors on
-  BareMetalInstance CRs or similar) so domains can be created before concrete
-  hosts are assigned.
-- No server eligibility validation (admin trusted on hostnames).
+  A server may belong to at most one FabricDomain in the deployment. The
+  fulfillment-service validates this uniqueness atomically; other inventory
+  eligibility checks remain the Cloud Infrastructure Admin's responsibility.
 - NIC mapping only via Netris template.
+- BMaaS tenant attachments remain single-NIC; multiple NICs in a server
+  template are provider-side fabric plumbing, not multiple tenant attachments.
 - `template_id` is Netris-specific (scoped to NetworkClass).
 - Templates pre-created by infra; OSAC does not manage template lifecycle.
-- **Bare-metal only; no SR-IOV/VM EW.** FabricDomain membership is
-  host/device-scoped. Virtual machines do not appear as FabricDomain members;
-  they attach to SR-IOV VFs or GPUs on hosts that are already in the domain.
-  VM east-west is a separate follow-on design.
-- IB/NVLink types reserved in API, not implemented.
+- FabricDomain membership is host/device-scoped. Bare-metal workloads use
+  member servers; VMs use the SR-IOV VFs or GPU devices on hosts already in
+  the domain. These east-west interfaces are provider-side and are not
+  represented as additional north-south network attachments.
+- Only `ETHERNET_EW` is supported by this design; `INFINIBAND_EW` and `NVLINK`
+  are rejected.
 
 ## Test Plan
 
@@ -662,6 +733,14 @@ equivalent to "create a Server Cluster in a VPC" with an additional resource.
 - FD-VAL-05: reject `ETHERNET_EW` when VN's NetworkClass is missing
   `template_id` → `FAILED_PRECONDITION`.
 - FD-VAL-06: reject `INFINIBAND_EW` and `NVLINK` types → `UNIMPLEMENTED`.
+- FD-VAL-07: reject a server already assigned to another FabricDomain with
+  `ALREADY_EXISTS`; verify the uniqueness check and membership reservation are
+  atomic.
+- SecurityGroup translation: verify the effective rules become fabric ACL
+  entries with the same action, direction, protocol, CIDR, and port semantics;
+  verify the deployment baseline policy remains separate and effective.
+- ACL failure: verify FabricDomain remains `Ready=False` and the controller
+  retries without claiming successful protection.
 - Template resolution: operator resolves NetworkClass from VN, then
   `template_id` from `east_west_config.ethernet_ew`.
 - Condition transitions: `Ready=False` (Reason=Provisioning) → `Ready=True`
@@ -675,6 +754,12 @@ equivalent to "create a Server Cluster in a VPC" with an additional resource.
 
 - Create NetworkClass with `east_west_config` → create FabricDomain CR →
   verify condition transitions to `Ready=True` and `backend_id` is populated.
+- Create a second FabricDomain using a server already assigned to the first;
+  verify the request is rejected atomically and no second backend Server
+  Cluster is created.
+- Change an effective SecurityGroup rule and verify the controller programs
+  the corresponding fabric ACL; inject an ACL failure and verify
+  `Ready=False` plus retry behavior.
 - Delete FabricDomain → verify Server Cluster cleanup and condition removal.
 - Re-provision after failure: simulate AAP job failure → verify operator
   re-queues and re-attempts provisioning.
@@ -687,6 +772,9 @@ equivalent to "create a Server Cluster in a VPC" with an additional resource.
   FabricDomain → verify Netris Server Cluster exists in VPC → verify EW
   isolation (same-tenant ping succeeds, cross-tenant blocked) → resize
   servers → delete FabricDomain → verify cleanup.
+- Verify an allowed SecurityGroup rule permits east-west traffic, a more
+  specific deny overrides a broader allow, and traffic denied by the effective
+  rules is dropped at the fabric ACL.
 - VNet coexistence: create VPC → Server Cluster → OSAC Subnet → verify
   distinct VXLAN IDs, no conflicts (already validated on zeus12).
 - Error path: create FabricDomain with invalid `template_id` on NetworkClass →

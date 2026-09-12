@@ -158,7 +158,6 @@ import "buf/validate/validate.proto";
 option (cleanapi.file).package = "osac.public.v1";
 
 message VirtualNetworkSpec {
-  string network_class = 1 [(buf.validate.field).string.min_len = 1];
   string ipv4_cidr = 2;
   string region = 3 [(cleanapi.field).private = true];
   string implementation_strategy = 4 [(cleanapi.field).private = true];
@@ -170,7 +169,11 @@ message VirtualNetworkStatus {
 }
 ```
 
-The generated public proto for this file would contain `VirtualNetworkSpec` with only `network_class` and `ipv4_cidr`, `VirtualNetworkStatus` with only `conditions`, the `Get` RPC without HTTP annotations, and no `Signal` RPC.
+The generated public proto for this file would contain `VirtualNetworkSpec`
+with only `ipv4_cidr`; `implementation_strategy` is provider-resolved and
+private, and there is no tenant-selectable `network_class` field in the
+single-NetworkClass model. `VirtualNetworkStatus` contains only `conditions`,
+the `Get` RPC has no HTTP annotations, and there is no `Signal` RPC.
 
 Entirely private files (hub, storage_backend, storage_tier types and services) use file-level exclusion:
 
@@ -412,7 +415,11 @@ No authentication or authorization changes. The public API surface, RBAC rules, 
 
 The active-object tables and ref tables contain only resource IDs — no sensitive data is exposed. The materialized ref tables are internal to the database and not accessible via any API.
 
-protoc-gen-cleanapi's `private = true` annotations ensure private fields (region, hub, finalizers, implementation_strategy) are excluded from the generated public protos. This is verified by `buf lint` on the generated output and by the existing integration test suite that exercises the public API.
+protoc-gen-cleanapi's `private = true` annotations ensure private fields
+(region, hub, finalizers, and implementation_strategy) are excluded from the
+generated public protos. This is verified by `buf lint` on the generated
+output and by the existing integration test suite that exercises the public
+API.
 
 Tenant isolation metadata (`osac.openshift.io/tenant`, `osac.openshift.io/owner-reference`) is unaffected — these annotations exist in the data model, not in proto field definitions.
 

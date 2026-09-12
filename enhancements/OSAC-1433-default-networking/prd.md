@@ -25,13 +25,19 @@ where a single create command produces a reachable instance.
   networking resources
 - Tenants who need custom networking retain the full explicit workflow —
   simplified creation is additive, not a replacement
-- Auto-provisioned networking resources are visible, editable, and follow
-  the same lifecycle as manually created ones
+- Auto-provisioned networking resources are visible and follow the same
+  create/read/delete lifecycle as manually created ones; their network-owned
+  fields are immutable after creation
+
+The shared networking resources, IPv4-only scope, connected single-hub
+deployment boundary, and operation contract are defined by the [Unified
+Networking PRD](/enhancements/OSAC-1433-unified-networking/prd.md#network-operation-contract)
+and [Unified Networking design](/enhancements/OSAC-1433-unified-networking/design.md#deployment-topology).
 
 ### 2.2 Non-Goals
 
 - Custom default configurations per tenant (all tenants in a deployment
-  receive the same default CIDR and SecurityGroup rules)
+  receive the same default CIDR and deployment-wide baseline policy)
 - Auto-provisioning of VirtualNetworks or Subnets beyond the initial
   default (tenants create additional VNs manually)
 - UI support for simplified creation (deferred — API and CLI only for now)
@@ -59,15 +65,15 @@ where a single create command produces a reachable instance.
 
 ### Tenant Admin Stories
 
-- As a Tenant Admin, I want to inspect and customize my default networking
-  resources (e.g., modify SecurityGroup rules) after they are auto-created
+- As a Tenant Admin, I want to inspect my default networking resources after
+  they are auto-created and know that network-owned fields are fixed at
+  creation time
 
 ### Cloud Infrastructure Admin Stories
 
-- As a Cloud Infrastructure Admin, I want to configure a default CIDR
-  range and default SecurityGroup rules on the NetworkClass, so that the
-  system can auto-create default networking resources for tenants at
-  onboarding
+- As a Cloud Infrastructure Admin, I want to configure the default CIDR
+  range on the NetworkClass, so that the system can auto-create default
+  networking resources for tenants at onboarding
 
 ### Cloud Provider Admin Stories
 
@@ -82,60 +88,68 @@ where a single create command produces a reachable instance.
 #### Default Networking
 
 - **FR-1:** At tenant onboarding, the system provisions a default
-  VirtualNetwork, IPv4 Subnet, IPv6 Subnet, and SecurityGroup for the
-  tenant (dual-stack). The tenant transitions to READY only after all
-  default networking resources are also READY. If default networking
+  VirtualNetwork, IPv4 Subnet, and SecurityGroup for the tenant, and provisions
+  a default NATGateway only when the NetworkClass advertises NATGateway
+  support. The tenant transitions to READY only after all supported default
+  networking resources are also READY. If default networking
   provisioning fails, the tenant remains in a non-READY state with a
   status condition describing the failure. The Cloud Provider Admin can
   inspect the failure and retry by deleting and re-creating the tenant.
   [User]
-- **FR-2:** The Cloud Infrastructure Admin configures default networking
-  parameters (IPv4 CIDR, IPv6 CIDR, SecurityGroup rules) on the
-  NetworkClass. Defaults are required — a NetworkClass without defaults
-  is rejected at creation time. [User]
-- **FR-3:** All tenants receive the same default CIDR ranges (IPv4 and
-  IPv6) as configured on the NetworkClass. Tenants are isolated at the
+- **FR-2:** The Cloud Infrastructure Admin supplies required default networking
+  parameters (IPv4 VN and Subnet CIDRs) when creating the single deployment
+  NetworkClass. A NetworkClass without `defaults` is rejected at creation
+  time, and the NetworkClass network configuration is immutable thereafter.
+  The deployment-wide baseline policy is always present, uses its configured
+  `permit` or `deny` default action, and is separate from the tenant fallback
+  SecurityGroup. [User]
+- **FR-3:** All tenants receive the same default IPv4 CIDR ranges as configured
+  on the NetworkClass. Tenants are isolated at the
   network level — the unified networking API provides VirtualNetworks
   with any IP subnet, and the system enforces isolation regardless of
   overlapping CIDRs between tenants. [User]
-- **FR-4:** Default resources are labeled as defaults, visible in list
-  and detail views, and editable by the Tenant Admin (e.g., adding
-  SecurityGroup rules). Default resources cannot be deleted while any
-  resource depends on them. [User]
+- **FR-4:** Default resources are labeled as defaults and visible in list and
+  detail views. Their network-owned fields are immutable after creation;
+  update and patch requests are rejected. Default resources cannot be deleted
+  while any resource depends on them. [User]
 - **FR-5:** Creating custom VirtualNetworks does not affect default
   resources — both coexist. [User]
 
 #### Optional Network Attachments
 
 - **FR-6:** The network attachment configuration on ComputeInstance,
-  Cluster, and BaremetalInstance is optional. When omitted, the system
-  populates it with the tenant's default Subnet and default SecurityGroup.
+  Cluster, and BaremetalInstance is optional. When omitted or empty, the
+  system populates both the tenant's default Subnet and default SecurityGroup.
   The resolved attachments are stored with the resource so the resource is
-  self-describing after creation. [User]
-- **FR-7:** When a resource is created with explicit network attachments,
-  no defaults are applied. [User]
+  self-describing after creation. For VMaaS, ComputeInstance retains its
+  list-shaped field but accepts at most one attachment. For BMaaS, resolution
+  produces exactly one tenant network attachment. [User]
+- **FR-7:** When an attachment supplies only some network fields, the system
+  defaults only the missing fields. A supplied Subnet or non-empty
+  SecurityGroup list is preserved unchanged. [User]
 
 #### Auto ExternalIP
 
 - **FR-8:** ComputeInstance and BaremetalInstance support
   `--external-ip-attachment`. When enabled, the system selects the
-  available ExternalIPPool with the most capacity, allocates an
-  ExternalIP, and creates an ExternalIPAttachment binding it to the
-  resource. The system selects the pool with the most available capacity
-  matching the requested IP family (defaulting to IPv4). When multiple
-  pools have equal capacity, selection is deterministic but unspecified.
-  [User]
+  available IPv4 ExternalIPPool with the most capacity, reserves capacity,
+  and creates a Pending ExternalIP and ExternalIPAttachment binding it to the
+  resource. Fabric allocation, target IP discovery, DNAT programming, and
+  the `Pending -> Allocated` / `Pending -> Ready` transitions are
+  asynchronous. When multiple pools have equal capacity, selection is
+  deterministic but unspecified. [User]
 - **FR-9:** Cluster supports `--external-ip-attachment`. When enabled,
-  the system allocates two ExternalIPs and creates two
-  ExternalIPAttachments — one for the API server and one for ingress.
-  [User]
-- **FR-10:** For clusters, ExternalIPs are allocated before provisioning
-  begins, resolving the ordering requirement that cluster nodes need
-  external access during setup. ExternalIPAttachments are created in an
-  inactive state and activate once the cluster's endpoint addresses are
-  available. [User]
+  the system reserves capacity and creates two Pending ExternalIPs and two
+  Pending ExternalIPAttachments — one pair for the API server and one for
+  ingress. Fabric allocation, endpoint discovery, and DNAT programming are
+  asynchronous. [User]
+- **FR-10:** For clusters, the Pending ExternalIP and ExternalIPAttachment
+  records are created before provisioning begins. ExternalIPs transition to
+  `Allocated` when the manager assigns addresses, and attachments transition
+  to `Ready` only after the cluster endpoint addresses are available and
+  inbound routing succeeds. [User]
 - **FR-11:** Auto-created ExternalIP and ExternalIPAttachment resources
-  are labeled as auto-provisioned. When the parent resource is deleted,
+  are labeled with `osac.openshift.io/auto-created: "true"`. When the parent resource is deleted,
   the system deletes auto-created ExternalIPAttachments first, then
   ExternalIPs, before the parent resource is removed. If cleanup of
   auto-created resources fails permanently, the parent resource is still
@@ -145,9 +159,11 @@ where a single create command produces a reachable instance.
 #### Default NATGateway
 
 - **FR-12:** At tenant onboarding, the system also provisions a
-  NATGateway on the default VirtualNetwork with an automatically
-  allocated ExternalIP. The NATGateway provides outbound connectivity
-  for all resources on the default VirtualNetwork. [User]
+  NATGateway on the default VirtualNetwork with an automatically allocated
+  ExternalIP only when the NetworkClass advertises NATGateway support. The
+  NATGateway provides outbound connectivity for all resources on the default
+  VirtualNetwork. K8s-only OVN deployments reject NATGateway because of the
+  current implementation limitation. [User]
 
 ## 5. Acceptance Criteria
 
@@ -162,21 +178,31 @@ where a single create command produces a reachable instance.
   `--external-ip-attachment` and no explicit network attachments — the
   server is placed on the default subnet with an auto-provisioned
   ExternalIP
-- [ ] Default VirtualNetwork, Subnets (IPv4 + IPv6), and SecurityGroup
-  exist and are READY before the tenant's first resource creation
+- [ ] A BaremetalInstance created without explicit network attachments has
+  exactly one resolved default network attachment
+- [ ] Default VirtualNetwork, IPv4 Subnet, and SecurityGroup exist and are
+  READY before the tenant's first resource creation; NATGateway is also READY
+  when the deployment advertises that capability
 - [ ] Default resources appear in list views with a label identifying
   them as defaults
-- [ ] A Tenant Admin can modify default SecurityGroup rules (e.g., add
-  ingress rules) and the changes take effect
+- [ ] Update and patch requests for default network resources and their
+  network-owned fields are rejected; changes require delete and recreate
+- [ ] Standard resource metadata and Catalog Item definitions and metadata
+  remain governed by their existing designs
 - [ ] Deleting a resource with auto-provisioned ExternalIP causes the
   auto-created ExternalIP and ExternalIPAttachment to be cleaned up
   automatically
-- [ ] Creating a resource with explicit network attachments bypasses
-  defaults entirely — no default resources are referenced
+- [ ] Creating a resource with complete explicit network attachments preserves
+  all supplied fields; creating one with partial attachments defaults only the
+  missing fields
 - [ ] When no ExternalIPPool has available capacity, the create API call
   returns an error and the resource is not persisted
 - [ ] A resource created without explicit network attachments shows the
   resolved default attachments when retrieved via the API
+- [ ] Creating a BaremetalInstance with more than one explicit network
+  attachment returns a single-NIC validation error
+- [ ] Creating a ComputeInstance with more than one explicit network
+  attachment returns a single-interface validation error
 
 ## 6. Dependencies
 
@@ -185,8 +211,8 @@ where a single create command produces a reachable instance.
   ExternalIPAttachment, NATGateway) defined in the
   [Unified Networking EP](/enhancements/OSAC-1433-unified-networking)
 - **OSAC-1712 (automatic pool selection)** — the auto ExternalIP pool
-  selection reuses the identical algorithm: pick the READY pool with the
-  most available capacity matching the IP family
+  selection reuses the identical algorithm: pick the READY IPv4 pool with the
+  most available capacity
 - **Tenant onboarding flow** — default resource creation hooks into the
   existing Tenant controller lifecycle
 - **osac-installer** — NetworkClass default configuration must be included
@@ -203,8 +229,13 @@ where a single create command produces a reachable instance.
 ### 7.2 Default SecurityGroup too permissive
 
 - **Owner:** Cloud Infrastructure Admin
-- **Mitigation:** Cloud Infrastructure Admin configures default rules on
-  NetworkClass; Tenant Admin can tighten rules after creation
+- **Mitigation:** The deployment baseline policy is provider-owned and is
+  always evaluated, with its configured default action (`permit` or `deny`)
+  applying when no more-specific rule matches. The tenant default
+  SecurityGroup is a separate tenant-scoped fallback used only when an
+  attachment omits an explicit SecurityGroup. It is immutable after creation;
+  tenants must create or select another SecurityGroup rather than tightening
+  its rules in place.
 
 ### 7.3 Auto ExternalIP orphans on partial failure
 

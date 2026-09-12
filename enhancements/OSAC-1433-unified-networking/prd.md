@@ -8,7 +8,7 @@ tracking-link:
   - https://redhat.atlassian.net/browse/OSAC-1433
 see-also:
   - Unified Networking Design: /enhancements/OSAC-1433-unified-networking
-  - Original Networking API: /enhancements/OSAC-356-networking
+  - Original Networking API: OSAC-356 proposal (retired)
   - BareMetal Instance API: /enhancements/OSAC-1118-baremetal-instance-api
   - Three-Layer Networking Model: https://docs.google.com/document/d/1MwBjpmYoZoUN3PVjeIRZ2Y6mBuf0lu1uvTtN6XXPPTM
 replaces:
@@ -54,8 +54,9 @@ This section defines key terms used throughout this document.
   are attached to subnets to receive IP addresses and network connectivity.
 
 - **SecurityGroup**: A stateful firewall controlling inbound and outbound
-  traffic for resources. Rules specify allowed protocols, ports, and
-  source/destination addresses.
+  traffic for resources. Tenant rules specify an action (`allow` or `deny`),
+  protocol, optional single port, direction, and IPv4 source/destination
+  CIDR.
 
 - **ExternalIPPool**: A provider-defined pool of IP addresses that are
   routable outside the VirtualNetwork. "External" means external to the VN —
@@ -73,23 +74,48 @@ This section defines key terms used throughout this document.
   egress but without a controlled source identity.
 
 - **NetworkClass**: A provider-configured resource that defines how networking
-  is implemented. Specifies which fabric manager and K8s manager handle
-  networking. In the current design, tenants select it when creating a
-  VirtualNetwork (this is one of the gaps — see #2).
+  is implemented. It specifies the available fabric and/or K8s manager for the
+  deployment. There is exactly one NetworkClass per deployment; tenants do not
+  select it per VirtualNetwork.
 
-- **Fabric Manager**: A single product (e.g., Netris, Neutron) that manages
-  all physical networking: tenant isolation, ACLs, IP allocation, DNAT,
-  SNAT. The physical fabric is one infrastructure — one controller manages
-  it all.
+- **Fabric Manager**: An optional single product (e.g., Netris, Neutron) that
+  manages physical networking: tenant isolation, ACLs, IP allocation, DNAT,
+  and SNAT.
 
-- **K8s Manager**: Handles everything needed to make VMs part of the fabric:
-  creates the K8s overlay and bridges it to the fabric segment. Only needed
-  for deployments that host VMs.
+- **K8s Manager**: A provider-registered networking manager. It may bridge a
+  K8s overlay to a fabric when paired with a Fabric Manager, or provide the
+  complete supported networking surface in a K8s-only deployment. NATGateway
+  is unsupported in the K8s-only OVN mode.
 
 - **Fabric**: The physical network infrastructure — switches, routers,
   gateways — that connects bare-metal servers and provides external
   connectivity. In this design, VMs also participate in the fabric through
   a K8s manager that bridges the OVN overlay to the physical network.
+
+### Address-family scope
+
+All networking resources and traffic described by this PRD use IPv4 CIDRs.
+IPv6 and dual-stack networking are not supported.
+
+### Network operation contract
+
+The user/API contract for network-owned data is create, read, and delete only.
+Network resources and the networking fields on `ComputeInstance`, `Cluster`,
+and `BaremetalInstance` do not support update, patch, or replace operations.
+All network-owned `spec` fields and all network-attachment fields are fixed at
+creation time; changing them requires deleting and recreating the resource (or
+the workload for an attachment field). Deletion may be delayed or rejected
+while dependencies or finalizers remain.
+
+East-west networking (`OSAC-1382`) is excluded from this shared contract because
+it is not implemented. Its design may define update and resize operations until
+that feature has its own implementation and tested contract.
+
+This restriction does not change standard resource metadata semantics or
+Catalog Item definitions and metadata. It also does not restrict updates to
+non-network fields on workload resources. Controllers may update status,
+conditions, readiness, IP-discovery results, and finalizers during
+reconciliation.
 
 ## 1. Problem Statement
 
@@ -99,7 +125,7 @@ resource model. The technical design that fulfills these requirements is
 described in a companion enhancement:
 [Unified Networking Design](/enhancements/OSAC-1433-unified-networking).
 
-The original [Networking API enhancement](/enhancements/OSAC-356-networking) was designed
+The original OSAC-356 Networking API enhancement was designed
 with VMaaS (ComputeInstance) as the only consumer, explicitly listing CaaS and
 BMaaS as non-goals. As OSAC grows and new teams onboard, this limitation forces
 each service type to implement networking independently:
@@ -140,23 +166,19 @@ SecurityGroups, and cannot share a VirtualNetwork between bare-metal servers
 and other resources. Both service types build ad-hoc networking outside the
 API.
 
-#### Gap #2: Tenants must choose networking backends
+#### Gap #2: Tenants must choose networking backends — resolved
 
-NetworkClass is modeled after Kubernetes StorageClass — tenants select it when
-creating a VirtualNetwork. But unlike StorageClass (where "fast" vs "cheap" is
-a meaningful tenant choice about capability), NetworkClass exposes network
-backend implementation details ("udn-net" vs "phys-net") that tenants should
-not need to understand. The provider's infrastructure determines the backend,
-not the tenant's preference.
+The provider's infrastructure determines the backend. The single deployment
+NetworkClass is resolved by the platform, and tenants provide only the
+tenant-owned network fields such as the VirtualNetwork CIDR. No tenant-facing
+NetworkClass selection or implementation-backend choice is exposed.
 
-#### Gap #3: No manager capability discovery or registration
+#### Gap #3: No manager capability discovery or registration — resolved
 
-There is no registry of which networking managers are installed or what each
-supports. A K8s manager like `cudn_localnet` handles VM overlay and bridging
-but not IP allocation or ACLs. A fabric manager like Netris handles
-everything on the physical side. The system has no way to know this — there
-is no machine-readable declaration of manager capabilities, and no validation
-that a manager is assigned to a role it can handle.
+Manager registration and capability declarations determine which manager
+combination is valid. A K8s-only manager must declare support for all shared
+networking resources except NATGateway; the operator rejects unsupported
+resource creation rather than leaving it Pending.
 
 #### Gap #4: ExternalIPAttachment only supports VMs
 
@@ -195,14 +217,6 @@ participants alongside BM servers. The current design does not address how
 VMs and bare-metal servers coexist in the same deployment, whether they can share
 a VirtualNetwork, or how traffic flows between them.
 
-#### Gap #8: Air-gapped environments not considered
-
-ExternalIPPool and ExternalIP must work in air-gapped deployments where there
-are no internet-routable IPs. Tenants still need the same API primitives (IP
-allocation, inbound DNAT, outbound SNAT) for data-center-internal external
-access. "External" means external to the VirtualNetwork, not
-internet-routable.
-
 #### Gap #9: CaaS has unique prerequisite ordering
 
 ~~Cluster worker nodes reach the hosted control plane API server via hairpin
@@ -223,8 +237,8 @@ the cluster's VIPs are discovered (see
 - Enable tenants to manage networking resources (VirtualNetworks, Subnets, SecurityGroups, ExternalIPs) without choosing implementation backends
 - Support pluggable networking backends that can be added without API changes
 - Enable VMs, clusters, and bare-metal servers to coexist in the same VirtualNetwork
-- Work in air-gapped environments using data-center-routable IPs
-- Support per-interface network attachment for bare-metal servers with multiple physical interfaces
+- Support one tenant network attachment for each bare-metal server, selected from the BareMetalInstanceType's physical network ports
+- Provide IPv4-only networking; IPv6 and dual-stack networking are not supported
 
 ### 2.2 Success Metrics
 
@@ -239,8 +253,8 @@ the cluster's VIPs are discovered (see
 - VPC Peering / cross-VN communication (separate enhancement)
 - DNS API for tenant-managed DNS zones (separate enhancement)
 - Advanced per-physical-interface configuration for BaremetalInstance (NIC
-  bonding, VLAN trunking, etc. — basic per-interface subnet attachment is
-  supported via the `interface` field on NetworkAttachment)
+  bonding, VLAN trunking, or multiple tenant attachments; BMaaS uses one
+  physical NIC selected through the `interface` field)
 - Load Balancer API
 - Internet Gateway API
 - Quota enforcement for networking resources
@@ -256,7 +270,7 @@ the cluster's VIPs are discovered (see
 - As a tenant, I want to allocate ExternalIPs and attach them to my VMs,
   clusters, or bare-metal servers for inbound access
 - As a tenant, I want to create a NATGateway for outbound access from my
-  VirtualNetwork
+  VirtualNetwork when the deployment's configured managers support it
 
 ### CaaS-Specific Stories
 
@@ -264,18 +278,13 @@ the cluster's VIPs are discovered (see
   VirtualNetwork
 - As a tenant, I want to attach ExternalIPs to my cluster's API server and
   ingress endpoints before provisioning
-- As a tenant, I want my cluster to work in air-gapped environments using
-  data-center-routable IPs
 
 ### BMaaS-Specific Stories
 
 - As a tenant, I want to place my BaremetalInstance on Subnets in my
   VirtualNetwork
 - As a tenant, I want to see the available physical interfaces on a bare-metal
-  template so I can decide how to attach networks
-- As a tenant, I want to attach different physical interfaces of my
-  BaremetalInstance to different Subnets (e.g., data interface to a data
-  subnet, management interface to a management subnet)
+  template so I can select the one interface used for my tenant network
 - As a tenant, I want to attach an ExternalIP to my bare-metal server for
   inbound access
 
@@ -315,9 +324,9 @@ ExternalIPPool, ExternalIP, ExternalIPAttachment, NATGateway.
 
 #### FR-4: ExternalIP is external to the VirtualNetwork (R4)
 
-"External" means external to the VirtualNetwork — OSAC does not prescribe
-whether the IPs are internet-routable, intranet-only, or data-center-local.
-The provider defines the pools; the API is the same regardless.
+"External" means external to the VirtualNetwork. In the supported connected
+boundary, the provider defines pools of addresses routable from the deployment;
+air-gapped and disconnected operation is not supported.
 
 #### FR-5: Clear ingress/egress separation (R5)
 
@@ -329,24 +338,45 @@ Providers configure which networking backends handle network operations.
 Tenants never choose networking backends — the system selects them based
 on the provider's configuration.
 
-#### FR-7: Per-interface network attachment for bare metal (R7)
+At least one of Fabric Manager or K8s Manager must be configured. A K8s-only
+deployment supports VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool,
+ExternalIP, and ExternalIPAttachment; NATGateway creation is rejected because
+of the current OVN limitation.
 
-Bare-metal servers have multiple physical interfaces. Tenants must be able to
-attach different interfaces to different Subnets based on the interface
-descriptions provided by the template.
+#### FR-6a: Deployment baseline and tenant SecurityGroups
+
+The deployment has one provider-owned baseline policy with a configured
+`permit` or `deny` default action. It is always evaluated and is not
+represented as a tenant SecurityGroup rule. A tenant
+default SecurityGroup is used only as the fallback attachment when a workload
+does not provide SecurityGroups. Tenant-created SecurityGroups require at
+least one explicit allow/deny rule. The most-specific matching rule wins.
+
+#### FR-7: Single network attachment for bare metal (R7)
+
+BareMetalInstanceTypes may expose multiple physical network ports. The
+`BaremetalInstance.network_attachments` API field remains repeated for
+compatibility, but accepts at most one tenant attachment, selected from the
+network ports provided by the BareMetalInstanceType. The selected attachment
+supplies the server's tenant IP, default route, and ExternalIP DNAT target.
 
 ### 4.2 Non-Functional Requirements
 
-_No non-functional requirements were specified in the original document._
+- Networking resources, attachments, external IPs, and security rules use IPv4
+  only. IPv6 and dual-stack networking are not supported.
 
 ## 5. Acceptance Criteria
 
 ### Core Networking
 
+- [ ] VirtualNetworks, Subnets, ExternalIPs, and SecurityGroup rules accept and
+  provision IPv4 CIDRs only; IPv6 and dual-stack requests are rejected
 - [ ] Resources in different VirtualNetworks cannot communicate (full isolation)
 - [ ] Resources in the same Subnet are in the same L2 broadcast domain
 - [ ] Resources in different Subnets within the same VirtualNetwork can communicate via Layer 3 routing
 - [ ] SecurityGroups control which traffic is permitted within these boundaries — enforced uniformly for all resource types
+- [ ] The provider-owned deployment baseline policy, with its configured `permit` or `deny` action, remains active with both default and explicitly selected tenant SecurityGroups
+- [ ] Tenant-created SecurityGroups contain at least one explicit rule with a supported action, direction, protocol, and IPv4 CIDR
 - [ ] Bare-metal servers in the same Subnet are in the same broadcast domain regardless of their physical location (rack, switch)
 - [ ] VMs in the same Subnet are in the same broadcast domain regardless of which infrastructure they run on
 - [ ] VMs are reachable at their subnet IP alongside bare-metal servers and cluster nodes
@@ -354,14 +384,31 @@ _No non-functional requirements were specified in the original document._
 - [ ] Any resource type (ComputeInstance, Cluster, BaremetalInstance) can be placed on any subnet
 - [ ] VMs, BM servers, and cluster nodes receive uniform networking treatment — SecurityGroup and ExternalIP operations work identically regardless of resource type
 - [ ] SecurityGroup enforcement is uniform across all resource types
-- [ ] Each resource type has its own network attachment configuration appropriate to the resource (e.g., bare-metal servers support per-interface attachment, clusters use a single shared attachment)
+- [ ] Each resource type has its own network attachment configuration appropriate to the resource (e.g., BMaaS uses one physical attachment, clusters use a single shared attachment)
 - [ ] ExternalIPAttachment supports all three service types as targets
 - [ ] The tenant workflow for creating networking resources is identical regardless of service type
+- [ ] NetworkClass manager combinations are resolved by the provider; tenants do not select a NetworkClass per VirtualNetwork
+- [ ] K8s-only deployments reject NATGateway creation and support the other shared networking resources through the registered K8s manager
+
+### Network Operations and Immutability
+
+- [ ] Network resources expose create, read/list, and delete operations only; user/API update, patch, and replace requests for network-owned `spec` fields are rejected or not exposed
+- [ ] All network-owned `spec` fields on NetworkClass, VirtualNetwork, Subnet, SecurityGroup, ExternalIPPool, ExternalIP, ExternalIPAttachment, and NATGateway are immutable after creation
+- [ ] `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` are immutable as complete lists, including every attachment field
+- [ ] `ComputeInstance.compute_network_attachments` and deprecated `network_attachments` retain list-shaped APIs but accept zero or one entry only; requests with more than one entry are rejected
+- [ ] `Cluster.network_attachment` and `BaremetalInstance.network_attachments` are immutable, including every attachment field
+- [ ] `auto_external_ip_attachment` is immutable after workload creation; changing it requires delete and recreate
+- [ ] Every network-owned field documents its wire type, format, presence/default behavior, allowed values, reference scope, and cross-field validation
+- [ ] Unsupported, unknown, or otherwise undefined network field values are rejected rather than inferred by clients or agents
+- [ ] Changing any network-owned field requires deleting and recreating the affected resource or workload
+- [ ] Controllers can update status, conditions, readiness, IP-discovery results, and finalizers without changing network-owned `spec` fields
+- [ ] Non-network workload fields and Catalog Item definitions and metadata remain governed by their existing designs
+- [ ] East-west networking (`OSAC-1382`) is excluded from this shared operation and field contract until it is implemented and tested
 
 ### External Access
 
 - [ ] ExternalIP semantics do not depend on internet reachability
-- [ ] The API and workflow are identical for all deployment topologies (air-gapped, internet-connected, intranet-only)
+- [ ] The supported deployment boundary is connected only; air-gapped requests are rejected before provisioning
 - [ ] CaaS clusters can provision using any routable ExternalIPs for API server and ingress
 - [ ] ExternalIPAttachment handles inbound traffic only
 - [ ] NATGateway handles outbound traffic only — it is optional and provides a dedicated egress identity, not a prerequisite for basic connectivity
@@ -378,16 +425,22 @@ _No non-functional requirements were specified in the original document._
 
 ### Resource-Specific (Bare Metal)
 
-- [ ] Host types describe available interfaces (name, role, description) for bare-metal servers
-- [ ] Bare-metal network attachments include an optional interface reference that identifies a named interface from the host type
-- [ ] Multiple network attachments are supported for bare-metal servers — one per physical interface
-- [ ] The same interface cannot appear in multiple attachments
+- [ ] BareMetalInstanceTypes describe available network ports (name, role, type, speed) for bare-metal servers
+- [ ] Bare-metal network attachments include an optional interface reference that identifies a named port from the BareMetalInstanceType
+- [ ] Bare-metal servers accept at most one `network_attachments` entry, using one valid physical interface
 - [ ] All referenced subnets must belong to the same VirtualNetwork
+
+### Resource-Specific (VMaaS)
+
+- [ ] `ComputeInstance.compute_network_attachments` remains a repeated/list field for API compatibility but accepts zero or one entry only
+- [ ] The deprecated `ComputeInstance.network_attachments` compatibility field follows the same zero-or-one cardinality when supplied alone
+- [ ] A single VM attachment is implicitly primary when `primary` is omitted; explicit `primary: false` and more than one entry are rejected
+- [ ] Multi-interface VM support is deferred until it has an implemented and tested contract
 
 ## 6. Dependencies
 
 - **Unified Networking Design**: [/enhancements/OSAC-1433-unified-networking](/enhancements/OSAC-1433-unified-networking) — Technical design document fulfilling these requirements
 - **Default Networking**: [/enhancements/OSAC-1433-default-networking](/enhancements/OSAC-1433-default-networking) — Related enhancement for resource ordering workflow
-- **Original Networking API**: [/enhancements/OSAC-356-networking](/enhancements/OSAC-356-networking) — VMaaS-only networking API (superseded for multi-service scenarios)
+- **Original Networking API**: OSAC-356 proposal (retired) — VMaaS-only networking API (superseded for multi-service scenarios)
 - **BareMetal Instance API**: [/enhancements/OSAC-1118-baremetal-instance-api](/enhancements/OSAC-1118-baremetal-instance-api) — Defines BaremetalInstance resource
 - **Three-Layer Networking Model**: [Google Doc](https://docs.google.com/document/d/1MwBjpmYoZoUN3PVjeIRZ2Y6mBuf0lu1uvTtN6XXPPTM) — Architectural reference
