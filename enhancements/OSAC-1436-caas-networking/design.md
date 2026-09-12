@@ -450,26 +450,12 @@ again before creating any private BMaaS worker request.
   resources and endpoint statuses are available. The ExternalIPAttachment
   controller requeues rather than dispatching DNAT with an empty endpoint.
 
-**Validation errors and tests:**
+**Validation errors:**
 
 - Field paths identify the failure: `spec.network_attachment.subnet`,
   `spec.network_attachment.security_groups[0]`,
   `spec.node_sets[<name>].baremetal_instance_type`, or the corresponding
-  `target_endpoint` field.
-- Unit tests reject a repeated/multi-attachment request, unsupported VM node
-  set, missing/default-not-Ready network resource, cross-VN reference,
-  missing fabric port, lifecycle interface, tenant `fabric_interface`, and
-  post-create network mutation.
-- Integration tests verify one ClusterOrder attachment, different stored
-  fabric interfaces for different node-set types, exactly one BM attachment
-  per worker, and no second attachment after worker reconciliation.
-- ExternalIP tests cover failure to reserve two addresses, duplicate API or
-  ingress endpoint values, wrong endpoint enum, endpoint status arriving
-  before ExternalIP allocation, and successful independent API/ingress
-  requeue-to-Ready transitions.
-- Delete tests prove the Cluster finalizer waits for worker BMI deletion and
-  auto-created ExternalIPAttachment/ExternalIP cleanup before releasing
-  dependent network resources.
+  `target_endpoint` field. No invalid input is persisted.
 
 #### Catalog Item interaction
 
@@ -664,205 +650,12 @@ Resolved: Kubeconfig API address uses the MetalLB VIP directly — workers are o
 
 ## Test Plan
 
-The executable, reviewable plan is maintained in
-[testplan.md](testplan.md). It inherits the shared cases from the [Unified
-Networking test plan](../OSAC-1433-unified-networking/testplan.md).
-
-CaaS tests must cover the singular Cluster attachment and the fact that one
-tenant network is shared by every node set while each node set may resolve a
-different physical fabric interface. The worker path is an integration with
-BMaaS, not a second CaaS networking implementation: every private worker
-request must be validated again by BMaaS.
-
-### Unit tests
-
-#### Cluster attachment and defaulting
-
-- Accept an omitted `network_attachment` and an empty message for default
-  resolution.
-- Accept a partial attachment and fill only its missing Subnet or empty
-  SecurityGroup list.
-- Accept a complete attachment and preserve both fields exactly.
-- Accept only the shared tenant-facing fields `subnet` and
-  `security_groups`.
-- Reject repeated/multi-attachment representations, unknown attachment
-  fields, `fabric_interface`, physical-port selectors, and per-node-set
-  tenant attachment selectors in the public Cluster request.
-- Reject missing, Pending, Failed, wrong-scope, wrong-VirtualNetwork, IPv6,
-  or duplicate SecurityGroup references.
-- Reject an invalid explicit value instead of replacing it with a default.
-- Verify exactly one resolved attachment is stored on ClusterOrder and worker
-  reconciliation cannot append a second tenant attachment.
-
-#### Cluster and node-set support
-
-- Accept BM node sets with a Ready/usable BareMetalInstanceType.
-- Accept a fabric-only/BM-only CaaS deployment without a K8s manager when
-  MetalLB VIP capability and the required `metallb_vip_prefix_length` are
-  configured.
-- Select the first ordered port with role `fabric` for each node-set type.
-- Preserve different resolved `fabric_interface` values for different node-set
-  types while keeping the tenant Subnet and SecurityGroups shared.
-- Reject a missing or malformed BareMetalInstanceType, a Pending/Failed type,
-  a type without a fabric port, a lifecycle-only type, or an invalid port
-  definition.
-- Reject VM-based node sets and multi-NIC node requests in the current CaaS
-  contract.
-- Reject tenant attempts to select or override `fabric_interface`.
-- Reject per-node-set Subnet, SecurityGroup, or tenant-interface overrides.
-- Verify an edit to BareMetalInstanceType or port ordering does not silently
-  change an existing Cluster's stored interface.
-
-#### Private BMaaS worker handoff
-
-- Build exactly one `BareMetalNetworkAttachment` for every worker.
-- Copy the Cluster Subnet and SecurityGroups and the immutable node-set
-  `fabric_interface` into that request.
-- Set the worker attachment's implicit primary value correctly.
-- Revalidate the worker through BMaaS, including type, scope, same-VN,
-  attachable-port, and lifecycle-port checks.
-- Reject a worker request with a second attachment, unknown/lifecycle port,
-  missing type, or changed stored interface.
-- Verify the worker controller does not re-resolve the interface after the
-  ClusterOrder has stored it.
-- Verify worker deletion waits for BMaaS deletion and port return before the
-  ClusterOrder releases network dependencies.
-
-#### VIPs and ExternalIP behavior
-
-- Validate endpoint enum combinations: Cluster requires `API` or `INGRESS`,
-  while Compute/BM endpoint rules remain shared and are not accepted here.
-- Reserve two distinct IPv4 ExternalIPs atomically for API and ingress when
-  auto external access is requested.
-- Reject inability to reserve two addresses and roll back Cluster and all
-  child records.
-- Verify duplicate API/Ingress bindings and duplicate endpoint values are
-  rejected.
-- Verify each attachment waits independently for its ExternalIP to be
-  Allocated and its matching Cluster endpoint to be populated.
-- Accept canonical IPv4 endpoints in the resolved Subnet/MetalLB pool and
-  reject empty, IPv6, duplicate, or out-of-subnet endpoints.
-- Verify API DNAT uses only `status.apiEndpoint` and ingress DNAT uses only
-  `status.ingressEndpoint`.
-- Reject premature Ready status or DNAT dispatch.
-
-#### Operations and Catalog
-
-- Reject updates, patches, replaces, and field-mask changes to the attachment,
-  Subnet, SecurityGroups, stored interfaces, endpoint fields, and
-  `auto_external_ip_attachment`.
-- Accept controller updates only to status, conditions, and finalizers.
-- Verify Catalog policy governs only tenant-facing Subnet and SecurityGroups.
-- Verify shared Catalog Items cannot lock/default tenant-local references.
-- Verify locked and editable policy precedence and direct/Catalog parity.
-
-### Integration tests
-
-Use fulfillment-service with real PostgreSQL and validation policy, an
-envtest/Kind cluster with Cluster/ClusterOrder and BM CRDs, the osac-operator,
-the CaaS worker reconciler, and a fake BMaaS private API with controllable
-worker lifecycle. Use fake MetalLB and manager responses for asynchronous
-VIP and network state.
-
-- Exercise direct, private, REST, and Catalog-based Cluster creation with
-  equivalent valid and invalid attachment inputs.
-- Verify default resolution happens before Cluster persistence and that only
-  missing fields are filled.
-- Verify one ClusterOrder attachment is written and remains one after worker
-  reconciliation for multiple node sets.
-- Verify two node-set types can resolve different fabric interfaces while
-  sharing the same tenant attachment.
-- Verify the agent-selection and agent-to-BMI MAC-correlation path selects
-  the intended worker and does not associate a worker with another host's
-  fabric interface.
-- Verify missing/NotReady instance types and invalid port roles fail before
-  cluster or worker creation.
-- Verify private worker requests are revalidated by BMaaS and a direct
-  ClusterOrder write cannot bypass BMaaS validation.
-- Verify worker deletion and Cluster finalizer ordering protect the Subnet,
-  SecurityGroups, and ExternalIP resources.
-- Verify VIP feedback flows from the template/ClusterOrder to Cluster status
-  and then to ExternalIPAttachment reconciliation.
-- Inject endpoint-before-IP, IP-before-endpoint, duplicate endpoint,
-  out-of-subnet endpoint, missing/overlapping MetalLB pool range, Signal RPC
-  failure, manager failure, and controller restart; verify independent
-  requeue and no premature DNAT.
-- Verify reserving one of two ExternalIPs and then failing the second rolls
-  back both reservations and the Cluster.
-- Verify API and ingress auto attachments are deleted before their ExternalIPs
-  and no resources leak after Cluster deletion.
-- Verify the MetalLB reserved VIP range does not overlap the fabric DHCP
-  allocation range and that both API and ingress VIPs remain in the permitted
-  Subnet/pool range.
-- When the deployment enables inline DNS integration, verify API and wildcard
-  application records point to the ExternalIPs as documented; do not treat a
-  DNS API as part of this feature.
-- Verify API, private, direct-CR, and Catalog paths reject immutable network
-  mutations consistently.
-
-### End-to-end tests — supported behavior
-
-In the supported connected single-hub CaaS environment:
-
-- Create a BM-backed Cluster with one explicit attachment and verify every
-  node set uses the selected Subnet.
-- Repeat the supported BM-backed workflow in a fabric-only/BM-only
-  deployment with MetalLB capability and verify that CaaS does not require a
-  K8s manager.
-- Create a Cluster with omitted and empty attachment input and verify tenant
-  defaults.
-- Create a Cluster with partial attachment input and verify only missing
-  fields are defaulted.
-- Create multiple node sets using different BareMetalInstanceTypes and verify
-  each stores the correct first fabric-role interface while all share one
-  tenant attachment.
-- Verify private workers are created with exactly one enriched BMaaS
-  attachment, receive an IP, and become usable only after BMaaS validation
-  and handoff complete.
-- Verify MetalLB allocates API and ingress VIPs and the Cluster does not
-  become usable before the required endpoint statuses are present.
-- Request auto external access and verify two distinct ExternalIPs,
-  endpoint-specific DNAT, API connectivity, and ingress connectivity.
-- Create through a Catalog Item with locked and editable policies and verify
-  tenant/default precedence.
-- Delete the Cluster and verify worker port return, ExternalIPAttachment
-  cleanup, ExternalIP cleanup, and release of dependent network resources.
-
-### End-to-end tests — unsupported behavior
-
-- A repeated or multi-entry Cluster attachment is rejected.
-- A tenant-supplied `fabric_interface`, physical port, per-node Subnet, or
-  per-node SecurityGroup override is rejected.
-- VM node sets and multi-NIC node requests are rejected.
-- Missing, Pending, Failed, wrong-scope, wrong-VirtualNetwork, or non-Ready
-  network references are rejected.
-- A BareMetalInstanceType without an ordered fabric-role port, or with only
-  lifecycle ports, is rejected.
-- A Cluster target with `UNSPECIFIED`, or a non-Cluster target with `API` or
-  `INGRESS`, is rejected.
-- Duplicate API/ingress endpoints, empty/IPv6/out-of-subnet endpoint status,
-  or a second ExternalIP reservation are rejected and leave no partial
-  resources.
-- Update, patch, replace, and field-mask changes to every network-owned field
-  are rejected; delete/recreate is required.
-- Worker reconciliation cannot append a second attachment or silently choose
-  another interface when the stored one is unavailable.
-- A tenant cannot make the Cluster Ready by writing status or bypass the
-  fulfillment/BMaaS APIs through ClusterOrder.
-- Legacy deployment-wide step collections such as `netris.steps` and
-  `agentless_net.steps` are not a supported tenant networking input and must
-  not be used as an alternate path for Cluster network configuration.
-- NATGateway, DNS API behavior, and other features not defined as part of
-  this CaaS networking contract are not accepted through CaaS network fields.
-
-### Coverage gate
-
-Every rule in CaaS Server Validation, the private-worker handoff, the VIP
-feedback flow, and the Catalog interaction must map to a unit or integration
-test. Every supported Cluster workflow and every user-visible unsupported
-workflow must have an E2E case. Failure tests must verify no Cluster, worker,
-VIP, ExternalIP, or attachment is left partially created.
-
+The executable, reviewable plan for CaaS Networking is maintained in
+[testplan.md](testplan.md). It covers the singular Cluster attachment, BM
+node-set interface resolution, private BMaaS handoff, VIP and ExternalIP
+behavior, cleanup, Catalog parity, and unsupported behavior. Shared
+networking contracts are covered by the [Unified Networking test
+plan](../OSAC-1433-unified-networking/testplan.md).
 ## Graduation Criteria
 
 **Note:** This section will be updated when the enhancement is targeted at a release.

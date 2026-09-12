@@ -369,40 +369,6 @@ for example `spec.compute_network_attachments[1]`,
 `spec.compute_network_attachments[0].primary`. The request is not persisted
 when the failure is found during create.
 
-#### VMaaS validation tests
-
-The VMaaS unit and integration suites must cover both accepted and rejected
-paths:
-
-- accept omitted and empty attachment input when both tenant defaults are
-  Ready; reject the same request when either default is absent, Pending, or
-  Failed;
-- accept one canonical entry with omitted or `primary: true`; reject explicit
-  `primary: false`, a second canonical entry, and a second deprecated entry;
-- accept one deprecated field-14 entry and verify conversion; reject both
-  field 14 and field 18 even when one is empty;
-- preserve a supplied Subnet and non-empty SecurityGroup list while filling
-  only missing fields; reject a cross-VirtualNetwork combination, duplicate
-  SecurityGroup, wrong-scope reference, missing reference, or non-Ready
-  reference;
-- reject VM creation without a K8s manager and accept K8s-only creation when
-  the manager advertises VM support;
-- reject a Catalog/Template list with more than one entry or explicit
-  `primary: false`, and verify that direct and Catalog creates return the same
-  validation result;
-- reject a CR that bypasses the API and contains multiple attachments or an
-  explicit false primary value;
-- verify the template creates exactly one interface and fails closed on an
-  invalid CR rather than silently dropping entries;
-- verify status ignores/rejects a mismatched, non-IPv4, duplicate, or second
-  interface result;
-- verify automatic ExternalIP creation rolls back on pool exhaustion or any
-  validation failure, and verify its controller requeues until both the
-  ExternalIP and VM IP prerequisites are Ready; and
-- verify update/patch attempts for every nested network field and the
-  auto-external switch are rejected, while controller status/finalizer writes
-  remain allowed.
-
 #### Catalog Item interaction
 
 Catalog Item v2 governs the canonical `compute_network_attachments` field as
@@ -428,8 +394,8 @@ The Catalog list must obey the same Compute rules as direct creation: it may
 contain zero or one attachment, and a supplied attachment is implicit primary
 when `primary` is omitted. Catalog policy can govern subnet, SecurityGroup,
 and the compatible `primary` value; CUDN/NAD placement and hosting-cluster
-selection remain system concerns. A shared Catalog Item cannot lock or default
-tenant-local Subnet or SecurityGroup references.
+selection remain system concerns. A shared Catalog Item cannot lock or
+default tenant-local Subnet or SecurityGroup references.
 
 #### Template Changes (osac-aap)
 
@@ -575,179 +541,12 @@ Resolved: Return error, no resource persisted. Pool capacity checked synchronous
 
 ## Test Plan
 
-The executable, reviewable plan is maintained in
-[testplan.md](testplan.md). It inherits the shared cases from the [Unified
-Networking test plan](../OSAC-1433-unified-networking/testplan.md).
-
-VMaaS tests must prove the list-shaped API has exactly the currently
-supported single-interface behavior. The suite must test both the canonical
-`compute_network_attachments` field and the temporary deprecated field-14
-compatibility path, while ensuring that compatibility does not weaken the
-canonical validation contract.
-
-### Unit tests
-
-#### Request shape and migration
-
-- Accept `compute_network_attachments` omitted or explicitly empty.
-- Accept one canonical attachment with omitted `primary` or
-  `primary: true`.
-- Reject two canonical entries before reference lookup, defaulting, capacity
-  reservation, or CR creation.
-- Reject explicit `primary: false` without rewriting it to `true`.
-- Accept one deprecated field-14 `network_attachments` entry and convert it
-  to the canonical Compute attachment with implicit primary semantics.
-- Accept an empty deprecated field-14 list according to the defaulting
-  contract.
-- Reject field 14 and field 18 supplied together, even if one is empty.
-- Reject a second entry in the deprecated field as well as the canonical
-  field.
-- Reject malformed references, unknown fields, malformed presence bits, and
-  unsupported attachment values.
-
-#### Attachment resolution and shared references
-
-- With omitted/empty input, resolve exactly one default Subnet and one
-  default SecurityGroup.
-- With only Subnet supplied, preserve it and fill only SecurityGroups.
-- With only SecurityGroups supplied, preserve them and fill only Subnet.
-- With both supplied, preserve both exactly.
-- Reject missing, Pending, Failed, wrong-scope, wrong-VirtualNetwork, and
-  duplicate SecurityGroup references.
-- Reject an invalid explicit value rather than replacing it with a default.
-- Verify the resolved Subnet is Ready, IPv4, and has the placement required by
-  the selected K8s manager.
-- Verify Catalog and Template values are resolved before tenant defaults.
-- Verify a shared Catalog Item cannot lock or default tenant-local references.
-
-#### Deployment, template, and status behavior
-
-- Reject ComputeInstance creation without a K8s manager.
-- Accept K8s-only VM placement when that manager advertises complete VM
-  support, without requiring a Fabric Manager.
-- Accept a Fabric Manager only when a K8s manager is also available for VM
-  placement.
-- Verify `PrimarySubnetRef()` returns the sole resolved attachment and never
-  selects the first entry from an invalid multi-entry list.
-- Verify the template receives one resolved attachment and creates exactly
-  one `l2bridge` interface.
-- Verify an invalid CR with multiple entries fails closed instead of silently
-  dropping all but the first entry.
-- Accept zero or one VMI status entry during provisioning and publish only a
-  canonical IPv4 address from the selected CUDN NAD and Subnet.
-- Reject duplicate, mismatched, non-IPv4, out-of-Subnet, and multiple VMI
-  status results as Ready status.
-
-#### Automatic ExternalIP
-
-- Select a Ready IPv4 pool with greatest available capacity and use a
-  deterministic tie-breaker.
-- Reject pool exhaustion and roll back ComputeInstance, ExternalIP,
-  ExternalIPAttachment, and capacity reservation.
-- Verify auto-created children target the ComputeInstance and use
-  `UNSPECIFIED` endpoint semantics.
-- Verify the ExternalIPAttachment remains Pending until both the ExternalIP
-  is Allocated and the VM's sole attachment IP is discovered.
-- Verify DNAT uses only the discovered sole attachment IP; tenant-supplied
-  arbitrary target IPs are rejected.
-
-#### Operations and lifecycle
-
-- Reject updates, patches, replaces, and field-mask changes to the attachment
-  list, Subnet, SecurityGroups, `primary`, and
-  `auto_external_ip_attachment`.
-- Accept controller changes only to status, conditions, discovered IP, and
-  finalizers.
-- Verify auto-created ExternalIPAttachment is cleaned before ExternalIP and
-  that manually created external resources are not implicitly deleted.
-- Verify deletion is blocked by shared dependency guards where applicable.
-- Verify retry after controller restart is idempotent and does not create a
-  second interface, IP, attachment, or job.
-
-### Integration tests
-
-Use fulfillment-service with real ephemeral PostgreSQL and validation policy,
-an envtest/Kind API server with ComputeInstance CRD/CEL validation, the
-osac-operator, a fake K8s manager, and controllable KubeVirt VMI status.
-
-- Exercise direct, private, REST, and Catalog-based ComputeInstance create
-  paths with the same valid and invalid attachment inputs.
-- Verify field-14 conversion and field-14/field-18 conflict behavior through
-  the real persistence path.
-- Verify default resolution and readiness checks happen before the CR is
-  persisted.
-- Verify a cross-VirtualNetwork or non-Ready reference fails atomically with
-  no ComputeInstance or auto-created children.
-- Verify no-K8s-manager rejection and K8s-only acceptance through manager
-  capability registration.
-- Verify CRD/CEL rejects multi-entry and false-primary direct CR writes, and
-  controller validation catches invalid objects supplied by test fixtures.
-- Verify the controller creates the namespace annotation and exactly one
-  KubeVirt interface, then maps the VMI IP into one status entry.
-- Inject invalid VMI status and verify no Ready network status is published.
-- Exercise Pending ExternalIP, Pending VM IP, allocation failure, manager
-  failure, and controller restart; verify requeue and no premature DNAT.
-- Exercise update/patch/replace through API and direct CR mutation; verify
-  every network-owned nested field remains immutable.
-- Exercise deletion with auto-created and manually created external resources
-  and verify the different cleanup ownership rules.
-- Verify Catalog and direct creates have identical final resolved networking,
-  while Catalog Item metadata is unchanged.
-
-### End-to-end tests — supported behavior
-
-In the supported connected single-hub VM environment:
-
-- Create a VM with one explicit Compute attachment and verify exactly one
-  KubeVirt interface, IP discovery, and connectivity.
-- Create a VM with omitted and empty attachment input and verify tenant
-  defaults are materialized.
-- Create VMs with partial attachments and verify only missing fields are
-  defaulted.
-- Create through the deprecated field alone and verify compatibility
-  conversion when that migration path is enabled.
-- Create through a Catalog Item with locked and editable policies and verify
-  policy precedence and single-interface validation.
-- Create with `auto_external_ip_attachment=true`, verify ExternalIP
-  allocation, delayed DNAT until VM IP discovery, and inbound connectivity.
-- Delete the VM and verify auto-created attachment and IP cleanup; verify
-  manually created external resources remain tenant-managed.
-- Restart the operator during subnet provisioning, VM provisioning, and IP
-  discovery and verify eventual completion without duplicate interfaces or
-  external resources.
-
-### End-to-end tests — unsupported behavior
-
-- More than one canonical or deprecated attachment is rejected.
-- Explicit `primary: false` is rejected.
-- Both old and new fields supplied are rejected, even when one is empty.
-- VM creation in a Fabric-only/BM-only deployment is rejected.
-- An invalid, non-Ready, cross-tenant, cross-VirtualNetwork, or IPv6
-  attachment is rejected.
-- A tenant-selected manager, implementation strategy, CUDN namespace, or
-  arbitrary VM IP is rejected.
-- A fabric-only or non-Ready EVPN Subnet is rejected; VMaaS does not fall
-  back to another Subnet.
-- Update, patch, replace, and field-mask changes to any network-owned field
-  are rejected; delete/recreate is required.
-- A KubeVirt/VMI object with multiple interfaces or an invalid status address
-  fails closed and cannot produce a Ready ComputeInstance.
-- ExternalIP pool exhaustion leaves no ComputeInstance, ExternalIP,
-  ExternalIPAttachment, or reserved capacity.
-- A VM does not trigger `move_network_attachment`; that BM/CaaS operation is
-  explicitly unsupported for VMaaS.
-- Multi-interface VM support, static host networking, tenant-selected IPAM,
-  and future K8s-manager implementations are not accepted as current
-  capabilities.
-
-### Coverage gate
-
-Every rule in the VMaaS Server Validation and VMaaS validation-tests sections
-must map to a unit or integration test. Each supported VM workflow must have
-an E2E test, and each user-visible unsupported path must have an E2E rejection
-test. Negative tests must verify both the error and the absence of partial
-resources.
-
+The executable, reviewable plan for VMaaS Networking is maintained in
+[testplan.md](testplan.md). It covers the one-or-less interface contract,
+attachment defaulting, provisioning and status, automatic ExternalIP behavior,
+immutability, cleanup, Catalog parity, and unsupported behavior. Shared
+networking contracts are covered by the [Unified Networking test
+plan](../OSAC-1433-unified-networking/testplan.md).
 ## Graduation Criteria
 
 **Note:** This section will be updated when the enhancement is targeted at a release.
